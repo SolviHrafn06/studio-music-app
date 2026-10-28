@@ -36,13 +36,25 @@ function autoTargets(tr) {
   return list;
 }
 function instrumentOptions() {
-  const groups = [{ group: 'Real instruments', items: Object.keys(INSTRUMENTS) }];
+  const groups = [{ group: 'Real instruments', items: Object.keys(INSTRUMENTS) }, { group: 'Sampler', items: [['__sampler', 'Sampler / Slicer (load a sample)…']] }];
   const cats = {};
   for (const [n, p] of Object.entries(SYNTH_PRESETS)) (cats[p.cat] ||= []).push(n);
   for (const [c, items] of Object.entries(cats)) groups.push({ group: 'Synth · ' + c, items });
   return groups;
 }
-function setInstrument(tr, name) {
+function instValue(inst) { return inst.kind === 'sample' ? '__sampler' : inst.name; }
+async function setInstrument(tr, name) {
+  if (name === '__sampler') {
+    const files = await pickFiles('#file-sample');
+    if (!files.length) { Headers.render(); return; }
+    try {
+      const buf = await Engine.ctx.decodeAudioData(await files[0].arrayBuffer());
+      const id = Buffers.add(buf);
+      App.mutate(() => { tr.inst = newSamplerInst(id, files[0].name.replace(/\.[^.]+$/, '').slice(0, 22)); });
+      Panels.show('inst');
+    } catch (e) { toast('Could not read that audio file.'); }
+    return;
+  }
   App.mutate(() => { tr.inst = presetInst(name); }, true);
   if (tr.inst.kind === 'sampler') { toast('Loading ' + name + '…', 1500); Sampler.load(name, Engine.ctx).then(() => toast(name + ' ready')); }
 }
@@ -63,7 +75,7 @@ const Headers = {
       if (tr.type === 'audio') row2.push(btn('mon', '🎧', 'Monitor: hear this track’s input live (Input & Amp tab)', Engine.monitors.has(tr.id), () => InputPanel.toggleMonitor(tr)));
       if (tr.type === 'audio') row2.push(btn('at', 'AT', 'Auto-Tune on/off', tr.autotune.on, () => App.mutate(() => (tr.autotune.on = !tr.autotune.on))));
       row2.push(btn('aut' + (tr.auto.some((l) => l.pts.length) ? ' has' : ''), 'A', 'Show automation lane', tr.autoShow, () => App.mutate(() => (tr.autoShow = !tr.autoShow))));
-      if (tr.type === 'synth') row2.push(options(h('select', { title: 'Instrument', onmousedown: (e) => e.stopPropagation(), onchange: (e) => setInstrument(tr, e.target.value) }), instrumentOptions(), tr.inst.name));
+      if (tr.type === 'synth') row2.push(options(h('select', { title: 'Instrument', onmousedown: (e) => e.stopPropagation(), onchange: (e) => setInstrument(tr, e.target.value) }), instrumentOptions(), instValue(tr.inst)));
       if (tr.type === 'drums') row2.push(options(h('select', { title: 'Drum kit', onmousedown: (e) => e.stopPropagation(), onchange: (e) => App.mutate(() => (tr.kit = e.target.value), false) }), Object.keys(DRUM_KITS).map((k) => [k, k + ' kit']), tr.kit));
       const vol = h('input', {
         type: 'range', min: 0, max: 1.2, step: 0.01, value: tr.volume, title: 'Volume', class: 'hvol',
@@ -105,6 +117,7 @@ const Headers = {
       { label: 'Move down', disabled: i === P.tracks.length - 1, action: () => App.mutate(() => { P.tracks.splice(i, 1); P.tracks.splice(i + 1, 0, tr); }) },
       { label: 'Color', sub: COLORS.map((c) => ({ label: '■ ' + c, action: () => App.mutate(() => (tr.color = c)) })) },
       { label: 'Effects…', action: () => { App.fxTrackId = tr.id; Panels.show('fx'); } },
+      { label: 'Bounce to audio (freeze)', disabled: tr.type === 'bus' || !tr.clips.length, action: () => AudioTools.bounce(tr) },
       '-',
       { label: 'Delete track', action: () => App.mutate(() => { P.tracks = P.tracks.filter((t) => t !== tr); }) },
     ]);
@@ -125,7 +138,9 @@ const TL = {
     window.addEventListener('resize', () => this.draw());
     $('#lanes').append(h('div', { id: 'rec-region' }), h('div', { id: 'marquee' }));
     this.scroll.addEventListener('dragover', (e) => { e.preventDefault(); });
-    this.scroll.addEventListener('drop', (e) => { e.preventDefault(); const f = [...e.dataTransfer.files].filter((x) => /audio|\.wav|\.mp3|\.ogg|\.flac|\.m4a/i.test(x.type + x.name)); if (f.length) importAudio(f); });
+    this.scroll.addEventListener('drop', (e) => { e.preventDefault();
+      const li = e.dataTransfer.getData('text/studio-lib');
+      if (li !== '') { const it = Library.items[+li]; if (it) { const r = this.cv.getBoundingClientRect(); const row = this.rowAt(e.clientY - r.top); const beat = Math.max(0, Math.round((e.clientX - r.left) / App.ppb / App.snap) * App.snap); Library.addToTimeline(it, row && row.kind === 'track' ? row.tr : null, beat); } return; } const f = [...e.dataTransfer.files].filter((x) => /audio|\.wav|\.mp3|\.ogg|\.flac|\.m4a/i.test(x.type + x.name)); if (f.length) importAudio(f); });
   },
   layout() {
     const rows = [];
@@ -156,7 +171,8 @@ const TL = {
     const g = sizeCanvas(this.cv, W, H);
     g.fillStyle = '#15171c';
     g.fillRect(0, 0, W, H);
-    for (let bar = 0; bar < beats / 4; bar++) if (Math.floor(bar / 4) % 2 === 1) { g.fillStyle = '#181b21'; g.fillRect(bar * 4 * ppb, 0, 4 * ppb, H); }
+    const bpb = App.bpb();
+    for (let bar = 0; bar < beats / bpb; bar++) if (Math.floor(bar / 4) % 2 === 1) { g.fillStyle = '#181b21'; g.fillRect(bar * bpb * ppb, 0, bpb * ppb, H); }
     for (const r of rows) {
       if (r.kind === 'auto') { g.fillStyle = '#111317'; g.fillRect(0, r.y, W, r.h); }
       else if (r.tr.id === App.selTrackId) { g.fillStyle = 'rgba(255,255,255,0.035)'; g.fillRect(0, r.y, W, r.h); }
@@ -172,8 +188,8 @@ const TL = {
       g.stroke();
     };
     if (ppb >= 60) lines('#1c1f26', (b) => Math.abs(b - Math.round(b)) > 0.01, 0.25);
-    lines('#23272f', (b) => b % 4 !== 0, 1);
-    lines('#373d4a', (b) => b % 4 === 0, 1);
+    lines('#23272f', (b) => b % bpb !== 0, 1);
+    lines('#373d4a', (b) => b % bpb === 0, 1);
     g.fillStyle = '#2a2f3a';
     for (const r of rows) g.fillRect(0, r.y + r.h - 1, W, 1);
     const L = P.loop;
@@ -238,14 +254,28 @@ const TL = {
       g.fillRect(L.start * ppb, 0, (L.end - L.start) * ppb, 6);
     }
     g.font = '11px Segoe UI, sans-serif';
-    const every = ppb < 14 ? 4 : ppb < 24 ? 2 : 1;
+    const every = ppb < 14 ? 4 : ppb < 24 ? 2 : 1, bpb = App.bpb();
     for (let b = 0; b <= beats; b++) {
       const x = Math.round(b * ppb) + 0.5;
-      if (b % 4 === 0) {
+      if (b % bpb === 0) {
         g.fillStyle = '#4a5160';
         g.fillRect(x, 10, 1, 16);
-        if ((b / 4) % every === 0) { g.fillStyle = '#c3c8d4'; g.fillText(String(b / 4 + 1), x + 4, 21); }
+        if ((b / bpb) % every === 0) { g.fillStyle = '#c3c8d4'; g.fillText(String(b / bpb + 1), x + 4, 21); }
       } else if (ppb >= 16) { g.fillStyle = '#343a46'; g.fillRect(x, 19, 1, 7); }
+    }
+    // markers
+    for (const m of P.markers || []) {
+      const x = m.b * ppb;
+      g.fillStyle = '#e879f9';
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 8, 0); g.lineTo(x, 9); g.fill();
+      g.fillRect(x, 0, 1.5, 26);
+      g.font = 'bold 10px Segoe UI';
+      const w = g.measureText(m.name).width + 8;
+      g.fillStyle = 'rgba(232,121,249,0.85)';
+      g.fillRect(x + 2, 11, w, 13);
+      g.fillStyle = '#1a0a20';
+      g.fillText(m.name, x + 6, 21);
+      g.font = '11px Segoe UI, sans-serif';
     }
   },
   clipLabel(tr, c) {
@@ -465,10 +495,11 @@ const TL = {
       window.removeEventListener('mouseup', upf);
       if (moved) return;
       App.selClips.clear();
+      if (tr.type === 'bus') { App.seek(Math.floor(beat / App.snap) * App.snap); this.draw(); return; }
       if (tr.type === 'audio') { App.seek(Math.floor(beat / App.snap) * App.snap); this.draw(); Panels.render(); return; }
       const start = Math.floor(beat / App.snap) * App.snap;
       App.mutate(() => {
-        const c = { id: uid(), start, length: 4 };
+        const c = { id: uid(), start, length: App.bpb() };
         if (tr.type === 'drums') { c.pattern = tr.curPattern || 0; c.length = tr.patterns[c.pattern].len / 4; c.off = 0; }
         else { c.notes = []; App.editClipId = c.id; }
         tr.clips.push(c);
@@ -560,12 +591,18 @@ const TL = {
       '-',
     ];
     if (tr.type === 'synth') items.push({ label: 'Edit notes', action: () => { App.editClipId = c.id; Panels.show('piano'); } });
+    if (tr.type === 'drums') items.push({ label: 'Make unique (own pattern)', action: () => AudioTools.makeUnique(tr, c) });
     if (tr.type === 'drums') items.push({ label: 'Pattern', sub: tr.patterns.map((p, i) => ({ label: p.name, checked: c.pattern === i, action: () => App.mutate(() => { c.pattern = i; tr.curPattern = i; }, false) })) });
     if (tr.type === 'audio') {
       if (c.takes && c.takes.length > 1) items.push({ label: 'Takes', sub: c.takes.map((b, i) => ({ label: 'Take ' + (i + 1), checked: c.buf === b, action: () => App.mutate(() => { c.buf = b; delete c.edit; }, false) })) });
       items.push(
         { label: 'Follow song tempo', checked: !!c.stretch, action: () => App.mutate(() => { c.stretch = !c.stretch; c.srcBpm = c.srcBpm || P.bpm; }, false) },
         { label: 'Edit pitch…', action: () => { App.atTrackId = tr.id; App.selClipId = c.id; Vocal.sub = 'pitch'; Panels.show('vocal'); } },
+        { label: 'Reverse', action: () => AudioTools.reverse(tr, c) },
+        { label: 'Normalize', action: () => AudioTools.normalize(tr, c) },
+        { label: 'Transpose', sub: [12, 7, 5, 2, 1, -1, -2, -5, -7, -12].map((st) => ({ label: (st > 0 ? '+' : '') + st + ' semitones', action: () => AudioTools.transpose(tr, c, st) })) },
+        { label: 'Chop to Slicer (new track)', action: () => makeSamplerTrack(c.buf, (c.name || 'Chops') + ' chops', true) },
+        { label: 'Play in Sampler (new track)', action: () => makeSamplerTrack(c.buf, c.name || 'Sampler', false) },
         { label: 'Fade in/out', sub: [0, 0.25, 0.5, 1, 2].map((f) => ({ label: f ? f + ' beat' + (f > 1 ? 's' : '') : 'None', action: () => App.mutate(() => { c.fadeIn = Math.min(f, c.length / 2); c.fadeOut = Math.min(f, c.length / 2); }, false) })) },
         { label: 'Clip volume', sub: [[-12, 0.25], [-6, 0.5], [-3, 0.71], [0, 1], [3, 1.41], [6, 2]].map(([db, g]) => ({ label: (db > 0 ? '+' : '') + db + ' dB', checked: Math.abs((c.gain ?? 1) - g) < 0.01, action: () => App.mutate(() => (c.gain = g), false) })) },
       );
@@ -574,6 +611,18 @@ const TL = {
     Menu.show(e.clientX, e.clientY, items);
   },
   rulerDown(e) {
+    if (e.button === 2) {
+      e.preventDefault();
+      const rect0 = this.ruler.getBoundingClientRect(), b = Math.max(0, Math.round((e.clientX - rect0.left) / App.ppb / App.snap) * App.snap);
+      const P = App.project, near = P.markers.find((m) => Math.abs(m.b * App.ppb - (e.clientX - rect0.left)) < 30);
+      Menu.show(e.clientX, e.clientY, [
+        { label: 'Add marker here…', action: () => { const n = prompt('Marker name (e.g. Verse, Chorus, Drop)', ['Intro', 'Verse', 'Chorus', 'Bridge', 'Drop', 'Outro'][P.markers.length % 6]); if (n) App.mutate(() => { P.markers.push({ b, name: n }); P.markers.sort((x, y) => x.b - y.b); }, false); } },
+        near ? { label: `Rename "${near.name}"…`, action: () => { const n = prompt('Marker name', near.name); if (n) App.mutate(() => (near.name = n), false); } } : null,
+        near ? { label: `Delete "${near.name}"`, action: () => App.mutate(() => (P.markers = P.markers.filter((m) => m !== near)), false) } : null,
+        near ? { label: `Loop "${near.name}" section`, action: () => { const nx = P.markers.find((m) => m.b > near.b); App.mutate(() => (P.loop = { on: true, start: near.b, end: nx ? nx.b : Engine.songEnd(P) || near.b + App.bpb() * 4 }), false); App.syncTop(); } } : null,
+      ].filter(Boolean));
+      return;
+    }
     const rect = this.ruler.getBoundingClientRect();
     const snap = Math.max(1, App.snap);
     const b0 = (e.clientX - rect.left) / App.ppb;

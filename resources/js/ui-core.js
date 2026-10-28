@@ -127,6 +127,11 @@ function knob({ label, norm, text, def = null, onInput, onDone, color, size = 42
 }
 // knob bound to a parameter spec (fx params, synth params)
 function specKnob(sp, obj, key, after, color) {
+  if (sp.dynamic === 'tracks') {
+    const list = [['', '— choose a track —'], ...App.project.tracks.filter((t) => t.type !== 'bus').map((t) => [t.id, t.name])];
+    return h('label', { class: 'k-select' }, h('span', {}, sp.label),
+      options(h('select', { onchange: (e) => { App.beginDrag(); obj[key] = e.target.value; after(true); App.endDrag(); App.syncEngine(); } }), list, obj[key] || ''));
+  }
   if (sp.options) {
     return h('label', { class: 'k-select' }, h('span', {}, sp.label),
       options(h('select', { onchange: (e) => { App.beginDrag(); obj[key] = e.target.value; after(true); App.endDrag(); } }), sp.options, obj[key]));
@@ -141,7 +146,7 @@ function specKnob(sp, obj, key, after, color) {
 
 // ---------------- project model ----------------
 const COLORS = ['#ff7a2f', '#ffc145', '#4ade80', '#38bdf8', '#a78bfa', '#f472b6', '#2dd4c4', '#fb923c', '#e879f9', '#a3e635'];
-const TYPE_ICON = { drums: '▦', synth: '♪', audio: '🎤' };
+const TYPE_ICON = { drums: '▦', synth: '♪', audio: '🎤', bus: '⇶' };
 const DEFAULT_HARM = () => ({ on: false, mix: 0.6, voices: [{ deg: 2, gain: 0.7, pan: -0.6 }, { deg: 4, gain: 0.6, pan: 0.6 }] });
 
 function newPattern(name, len = 16) { return { name, len, steps: {} }; }
@@ -151,6 +156,7 @@ function makeTrack(type, P) {
     id: uid(), type, color: COLORS[(P.colorIdx - 1) % COLORS.length], volume: 0.8, pan: 0,
     mute: false, solo: false, eq: { low: 0, mid: 0, high: 0 }, rev: 0.08, dly: 0, clips: [], fx: [], auto: [], autoShow: false, autoSel: 'vol', armed: false,
   };
+  if (type === 'bus') Object.assign(t, { name: 'Bus', rev: 0, color: '#9ca3af' });
   if (type === 'drums') Object.assign(t, {
     name: 'Drums', kit: 'Classic', curPattern: 0, patterns: [newPattern('Pattern 1')],
     channels: DRUM_KIT.slice(0, 9).map((d) => ({ id: uid(), kind: d.id, name: d.name, vol: 0.8, mute: false, sample: null, pitch: 0 })),
@@ -163,11 +169,13 @@ function makeTrack(type, P) {
   return t;
 }
 function blankProject() {
-  return { version: 2, name: 'My Song', bpm: 120, key: 0, scale: 'Major', loop: { on: false, start: 0, end: 16 }, tracks: [], colorIdx: 0, master: { fx: [], volume: 0.9, preset: 'None' } };
+  return { version: 2, name: 'My Song', bpb: 4, markers: [], bpm: 120, key: 0, scale: 'Major', loop: { on: false, start: 0, end: 16 }, tracks: [], colorIdx: 0, master: { fx: [], volume: 0.9, preset: 'None' } };
 }
 function normalizeProject(P) {
   P.version = 2;
   P.master = P.master || { fx: [], volume: 0.9, preset: 'None' };
+  P.bpb = P.bpb || 4;
+  P.markers = P.markers || [];
   P.loop = P.loop || { on: false, start: 0, end: 16 };
   for (const t of P.tracks) {
     t.fx = t.fx || [];
@@ -266,6 +274,8 @@ const App = {
   midiRec: null,
   dirty: false,
 
+  bpb() { return (this.project && this.project.bpb) || 4; },
+  patMode: false,
   get selClipId() { return this.selClips.size ? [...this.selClips][this.selClips.size - 1] : null; },
   set selClipId(id) { this.selClips = new Set(id ? [id] : []); },
   track(id) { return this.project.tracks.find((t) => t.id === id); },
@@ -389,13 +399,27 @@ const App = {
     $('#scale').value = P.scale;
     $('#btn-loop').classList.toggle('on', P.loop.on);
     $('#song-name').value = P.name;
+    $('#timesig').value = P.bpb || 4;
+    $('#snap').options[0].value = P.bpb || 4;
   },
 
   // ---- transport ----
   togglePlay() { if (Engine.playing) this.stop(); else this.play(); },
   play() {
-    Engine.play(this.playhead);
+    const tgt = this.patMode ? this.patTarget() : null;
+    if (tgt) {
+      const { tr, clip } = tgt;
+      Engine.play(clip.start);
+      Engine.override = { P: { ...this.project, tracks: [{ ...tr, clips: [clip] }] }, loop: { on: true, start: clip.start, end: clip.start + clip.length } };
+    } else Engine.play(this.playhead);
     this.setPlayUI(true);
+  },
+  patTarget() {
+    if (this.tab === 'piano' || this.tab === 'inst') { const f = this.findClip(this.editClipId); if (f) return { tr: f.tr, clip: f.c }; }
+    const tr = this.track(this.rackTrackId);
+    if (tr && (this.tab === 'rack' || !this.findClip(this.editClipId))) { const pat = tr.patterns[tr.curPattern || 0]; return { tr, clip: { id: '__pat', start: 0, length: pat.len / 4, pattern: tr.curPattern || 0, off: 0 } }; }
+    const f = this.findClip(this.selClipId) || this.findClip(this.editClipId);
+    return f ? { tr: f.tr, clip: f.c } : null;
   },
   setPlayUI(on) {
     $('#btn-play').classList.toggle('on', on);
@@ -640,6 +664,7 @@ function usedBuffers(P) {
   P.tracks.forEach((t) => {
     t.clips.forEach((c) => { if (c.buf) used.add(c.buf); (c.takes || []).forEach((b) => used.add(b)); if (c.edit && c.edit.src) used.add(c.edit.src); });
     (t.channels || []).forEach((ch) => ch.sample && used.add(ch.sample));
+    if (t.inst && t.inst.kind === 'sample' && t.inst.buf) used.add(t.inst.buf);
   });
   return used;
 }

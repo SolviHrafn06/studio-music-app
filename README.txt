@@ -1,4 +1,4 @@
-STUDIO 2.1 - free music maker with built-in Auto-Tune
+STUDIO 3.0 - free music maker with built-in Auto-Tune
 =====================================================
 
 INSTALL
@@ -10,6 +10,40 @@ INSTALL
   If Windows SmartScreen says "Windows protected your PC", click
   "More info" -> "Run anyway" (it does that for any unsigned app).
   Needs Windows 10 or 11. Allow microphone / MIDI access when asked.
+
+NEW IN 3.0 - FOR FL STUDIO USERS
+  - Sampler / Slicer: load any sample and play it across the keyboard, or
+    chop a loop into slices (auto-detects the beats, or chop 4/8/16/32).
+    "Make pattern" writes the slices back as notes so you can rearrange them.
+    Right-click an audio clip > "Chop to Slicer" works too.
+  - 808 glides: turn on Mono / slide in the synth (or use the "808 Slide"
+    preset) and overlap notes in the piano roll to slide between them.
+  - FM synthesis (FM Bell, FM E-Piano, FM Bass, FM Growl presets).
+  - Mixer buses: "+ Bus" in the Mixer, then set a track's Out to the bus to
+    group tracks (all drums, all vocals...) and process them together.
+  - True sidechain compressor: add "Sidechain Comp" to your bass/pad and
+    pick the kick/drum track as the key - pro pumping.
+  - Piano roll: chord stamps (click once = whole chord, in key or by type),
+    Scale lock, ghost notes from other tracks, Tools menu (strum, humanize,
+    legato, reverse, double/half speed, snap to key), Ctrl+B duplicate,
+    Ctrl+Q quantize.
+  - My samples: add your own sample-pack folders in the Browser, search,
+    preview, and send sounds to the song, the Channel Rack or the Sampler -
+    or drag them straight onto the timeline.
+  - Audio tools (right-click an audio clip): Reverse, Normalize, Transpose
+    (+/- semitones, keeps length), Chop to Slicer. Track menu: Bounce to
+    audio (freeze). Drum clips: Make unique.
+  - PAT / SONG button: PAT loops just the pattern or clip you're editing,
+    like FL Studio.
+  - FL-style keys: F5 hide/show bottom panel, F6 Channel Rack, F7 Piano Roll,
+    F8 Browser, F9 Mixer, F10 Audio settings, F11 Effects, F12 Vocal Studio,
+    Ctrl+R export.
+  - Time signatures (2/4 to 7/4) and song markers (right-click the bar
+    numbers: add marker, loop a section).
+  - Channel Rack patterns can be 12, 16, 24, 32, 48 or 64 steps.
+
+  NOT POSSIBLE IN STUDIO (vs. FL Studio): loading VST/third-party plugins,
+  ASIO drivers, and FL's huge factory sound library.
 
 NEW IN 2.1 - INPUTS & GUITAR AMPS
   - Choose the input for every audio track: built-in mic, USB mic, or any

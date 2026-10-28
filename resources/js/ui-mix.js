@@ -47,7 +47,9 @@ const Mixer = {
       const inserts = h('div', { class: 'inserts' },
         tr.fx.map((f) => h('div', { class: 'ins' + (f.on ? '' : ' off'), title: 'Open ' + FX[f.type].name, onclick: () => { App.fxTrackId = tr.id; Panels.show('fx'); } }, h('span', { class: 'led' }), FX[f.type].name)),
         h('div', { class: 'ins add', onclick: () => { App.fxTrackId = tr.id; Panels.show('fx'); } }, '+ FX'));
-      box.append(h('div', { class: 'strip' + (tr.id === App.selTrackId ? ' sel' : ''), onmousedown: () => { App.selTrackId = tr.id; $$('.strip').forEach((s) => s.classList.remove('sel')); } },
+      const buses = P.tracks.filter((t) => t.type === 'bus');
+      const outSel = tr.type === 'bus' ? h('div', { class: 'hint2' }, 'Bus → Master') : options(h('select', { class: 'out-sel', title: 'Where this track’s sound goes', onmousedown: (e) => e.stopPropagation(), onchange: (e) => App.mutate(() => (tr.out = e.target.value || null)) }), [['', '→ Master'], ...buses.map((b) => [b.id, '→ ' + b.name])], tr.out || '');
+      box.append(h('div', { class: 'strip' + (tr.type === 'bus' ? ' bus' : '') + (tr.id === App.selTrackId ? ' sel' : ''), onmousedown: () => { App.selTrackId = tr.id; $$('.strip').forEach((s) => s.classList.remove('sel')); } },
         h('div', { class: 'nm', style: `border-color:${tr.color}`, title: tr.name }, tr.name),
         inserts,
         h('div', { class: 'sends' },
@@ -57,8 +59,10 @@ const Mixer = {
           mini('Pan', (tr.pan + 1) / 2, 0.5, (n) => (Math.abs(n - 0.5) < 0.01 ? 'C' : n < 0.5 ? 'L' + Math.round((0.5 - n) * 200) : 'R' + Math.round((n - 0.5) * 200)), (n) => (tr.pan = n * 2 - 1)),
           mini('Tone', (tr.eq.high + 15) / 30, 0.5, (n) => { const v = n * 30 - 15; return (v > 0 ? '+' : '') + v.toFixed(0); }, (n) => (tr.eq.high = n * 30 - 15))),
         h('div', { class: 'fader-row' }, fader, meter),
+        outSel,
         h('div', { class: 'btns' }, btns)));
     }
+    box.append(h('div', { class: 'strip add-bus' }, h('button', { title: 'A bus groups tracks so you can process them together (e.g. all drums)', onclick: () => { addTrack('bus'); Panels.show('mixer'); } }, '+ Bus'), h('div', { class: 'hint2' }, 'Group tracks: set their Out to the bus.')));
     const mMeter = h('canvas', { width: 14, height: 120 });
     this.meters.push({ cv: mMeter, master: true, peak: 0, hold: 0, ht: 0 });
     box.append(h('div', { class: 'strip master' },
@@ -140,7 +144,7 @@ const FxPanel = {
       requestAnimationFrame(() => this.drawEq(t, f, cv));
       this.eqDrag(t, f, cv, after);
     }
-    if (['comp', 'limiter', 'deess'].includes(f.type)) {
+    if (['comp', 'limiter', 'deess', 'scomp'].includes(f.type)) {
       const gr = h('div', { class: 'gr' }, h('span', {}, 'Gain reduction'), h('div', { class: 'gr-bar' }, h('div', { class: 'gr-fill' })), h('span', { class: 'gr-val' }, '0 dB'));
       card.append(gr);
       this.grs.push({ el: gr, t, id: f.id });

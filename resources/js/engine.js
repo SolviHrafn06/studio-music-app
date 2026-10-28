@@ -128,6 +128,7 @@ const Engine = {
     n.meter = ctx.createAnalyser();
     n.meter.fftSize = 512;
     n.fxOut.connect(n.low).connect(n.mid).connect(n.high).connect(n.vol).connect(n.autoVol).connect(n.pan).connect(bus.input);
+    n.outDest = bus.input;
     n.pan.connect(n.rev).connect(bus.revIn);
     n.pan.connect(n.dly).connect(bus.dlyIn);
     n.pan.connect(n.meter);
@@ -171,7 +172,7 @@ const Engine = {
 
   applyTrack(n, tr, anySolo, P, live) {
     const set = (p, v) => setP(p, v, live);
-    const audible = !tr.mute && (!anySolo || tr.solo);
+    const audible = !tr.mute && (!anySolo || tr.solo || (tr.type === 'bus' && P.tracks.some((t) => t.out === tr.id && t.solo)));
     const volLane = this.activeLane(tr, 'vol'), panLane = this.activeLane(tr, 'pan');
     set(n.vol.gain, audible ? (volLane ? 1 : tr.volume) : 0);
     if (!panLane) set(n.pan.pan, tr.pan);
@@ -225,11 +226,44 @@ const Engine = {
       if (!n) { n = this.createTrackChain(this.ctx, tr, this.bus, this.env); this.nodes.set(tr.id, n); }
       this.applyTrack(n, tr, anySolo, P, true);
     }
+    this.route(this.nodes, P, this.bus);
     const m = this.bus, mfx = P.master.fx;
     if (m.fxKey !== this.fxKeyOf(mfx)) this.buildFx(this.ctx, m, mfx, this.env);
     for (const f of m.fx) { const d = mfx.find((x) => x.id === f.id); if (d) f.inst.set(d.p, true); }
     setP(m.vol.gain, P.master.volume, true);
     this.bus.dly.delayTime.setTargetAtTime((60 / P.bpm) * 0.75, this.ctx.currentTime, 0.05);
+  },
+
+  // output routing (tracks -> buses -> master) and sidechain keys
+  route(nodes, P, master) {
+    for (const tr of P.tracks) {
+      const n = nodes.get(tr.id);
+      if (!n) continue;
+      const busTr = tr.type !== 'bus' && tr.out ? P.tracks.find((t) => t.id === tr.out && t.type === 'bus') : null;
+      const dest = busTr && nodes.get(busTr.id) ? nodes.get(busTr.id).input : master.input;
+      if (n.outDest !== dest) {
+        try { n.pan.disconnect(n.outDest); } catch (e) {}
+        n.pan.connect(dest);
+        n.outDest = dest;
+      }
+      for (const f of n.fx) {
+        if (f.type !== 'scomp') continue;
+        const def = (tr.fx || []).find((x) => x.id === f.id);
+        let src = def && def.p.src;
+        if (!src || !P.tracks.some((t) => t.id === src)) {
+          const d = P.tracks.find((t) => t.type === 'drums' && t.id !== tr.id);
+          src = d ? d.id : '';
+          if (def) def.p.src = src;
+        }
+        const sn = src && src !== tr.id ? nodes.get(src) : null;
+        const keyNode = sn ? sn.high : null;
+        if (f.inst.keySrc !== keyNode) {
+          if (f.inst.keySrc) try { f.inst.keySrc.disconnect(f.inst.key); } catch (e) {}
+          if (keyNode) keyNode.connect(f.inst.key);
+          f.inst.keySrc = keyNode;
+        }
+      }
+    }
   },
 
   ensureInstruments(P) {
@@ -306,9 +340,18 @@ const Engine = {
           const clipSteps = s1 - s0;
           if (tr.arp && tr.arp.on) this.arpStep(ctx, tr, c, n, rel, s0, clipSteps, time, spStep, reg);
           else {
+            const mono = tr.inst.kind === 'synth' && tr.inst.patch.mono;
             for (const nt of c.notes) {
               if (Math.floor(nt.s + 1e-6) !== rel || nt.s >= clipSteps) continue;
-              playInstrument(ctx, n.input, tr.inst, nt.p, time + (nt.s - rel) * spStep, nt.d * spStep, nt.v ?? 0.8, reg);
+              const t0 = time + (nt.s - rel) * spStep, d0 = nt.d * spStep;
+              if (mono && n.mono && n.mono.end > t0 + 0.002 && n.mono.voice.glide) {
+                // overlapping note in mono mode = slide (808 glide)
+                n.mono.voice.glide(nt.p, t0, d0);
+                n.mono.end = Math.max(n.mono.end, t0 + d0);
+                continue;
+              }
+              const voice = playInstrument(ctx, n.input, tr.inst, nt.p, t0, d0, nt.v ?? 0.8, reg);
+              if (mono) n.mono = { voice, end: t0 + d0 };
             }
           }
         } else if (tr.type === 'audio') {
@@ -396,11 +439,12 @@ const Engine = {
     return this.nextTime;
   },
 
+  override: null,
   tick() {
-    const ctx = this.ctx, P = App.project;
+    const ctx = this.ctx, P = this.override ? this.override.P : App.project;
     const spStep = 60 / P.bpm / 4;
     while (this.nextTime < ctx.currentTime + 0.12) {
-      const L = P.loop;
+      const L = this.override ? this.override.loop : P.loop;
       if (L.on && L.end > L.start && this.step >= Math.round(L.end * 4)) {
         this.step = Math.round(L.start * 4);
         this.anchors.push({ time: this.nextTime, step: this.step });
@@ -413,7 +457,7 @@ const Engine = {
         return;
       }
       this.scheduleStep(ctx, P, this.step, this.nextTime, this.jump, this.nodes, this.reg);
-      if ((this.metronome || (this.recording && App.countClick)) && this.step % 4 === 0) playClick(ctx, this.bus.input, this.nextTime, this.step % 16 === 0);
+      if ((this.metronome || (this.recording && App.countClick)) && this.step % 4 === 0) playClick(ctx, this.bus.input, this.nextTime, this.step % (4 * ((P.bpb) || 4)) === 0);
       this.jump = false;
       this.step++;
       this.nextTime += spStep;
@@ -435,7 +479,8 @@ const Engine = {
     for (const s of this.sources) { try { s.stop(); } catch (e) {} }
     this.sources.clear();
     this.playing = false;
-    for (const n of this.nodes.values()) for (const f of n.fx) if (f.inst.reset) f.inst.reset();
+    this.override = null;
+    for (const n of this.nodes.values()) { n.mono = null; for (const f of n.fx) if (f.inst.reset) f.inst.reset(); }
     for (const f of this.bus.fx) if (f.inst.reset) f.inst.reset();
     if (App.project) this.sync(App.project);
   },
@@ -604,6 +649,7 @@ const Engine = {
       this.applyTrack(n, t2, anySolo, PP, false);
       nodes.set(tr.id, n);
     }
+    this.route(nodes, PP, bus);
     const OFF = 0.05;
     for (let s = 0; s < Math.round(end * 4); s++) this.scheduleStep(ctx, PP, s, s * spStep + OFF, s === 0, nodes, noop);
     const out = await ctx.startRendering();

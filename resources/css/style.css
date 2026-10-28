@@ -362,3 +362,28 @@ kbd { background: var(--bg3); border: 1px solid var(--line); border-bottom-width
 .modal select { width: 100%; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; }
 .modal-head h3 { margin: 0; }
+
+.smp-main { flex: 1 1 100%; }
+.smp-wave { display: block; border-radius: 6px; margin: 6px 0; cursor: pointer; width: 100%; }
+
+.strip.bus { background: #1f2430; border-style: dashed; }
+.strip .out-sel { width: 100%; font-size: 10px; padding: 1px 2px; }
+.strip.add-bus { justify-content: center; background: transparent; border-style: dashed; width: 100px; text-align: center; }
+.strip > * { flex-shrink: 0; }
+.strip > .fader-row { flex: 1 1 auto; min-height: 70px; }
+.mixer { min-height: 330px; }
+
+.lib-search { width: 220px; }
+.lib-folder { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 12px; padding: 1px 4px 1px 8px; display: inline-flex; gap: 4px; align-items: center; }
+.lib-row { cursor: grab; }
+.lib-row .br-info { cursor: pointer; }
+.br-tools { flex-wrap: wrap; }
+
+.mode-btn { width: 50px !important; font-size: 11px !important; font-weight: 700; color: var(--accent2); }
+.mode-btn.pat { background: #12312f; border-color: var(--accent2); }
+.br-list.lib { grid-template-columns: repeat(auto-fill, minmax(520px, 1fr)); }
+#timesig { width: 58px; }
+#scale { max-width: 100px; }
+#topbar .field { gap: 4px; }
+#topbar { gap: 7px; }
+@media (max-width: 1560px) { #save-state { display: none; } }

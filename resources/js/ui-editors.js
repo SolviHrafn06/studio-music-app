@@ -1,3 +1,19 @@
+// chord stamps for the piano roll
+const CHORD_TYPES = {
+  'Single note': null, 'Triad (in key)': 'key3', '7th (in key)': 'key7', 'Major': [0, 4, 7], 'Minor': [0, 3, 7], 'Power (5th)': [0, 7, 12],
+  'Sus2': [0, 2, 7], 'Sus4': [0, 5, 7], 'Maj7': [0, 4, 7, 11], 'Min7': [0, 3, 7, 10], 'Dom7': [0, 4, 7, 10], 'Dim': [0, 3, 6], 'Add9': [0, 4, 7, 14], 'Min9': [0, 3, 7, 10, 14], 'Octave': [0, 12],
+};
+function chordNotes(p, type, P) {
+  const t = CHORD_TYPES[type];
+  if (!t) return [p];
+  if (Array.isArray(t)) return t.map((i) => p + i);
+  const mask = scaleMask(P.key, P.scale);
+  const up = (from, steps) => { let k = from, c = 0; while (c < steps) { k++; if (mask[((k % 12) + 12) % 12]) c++; } return k; };
+  const n = t === 'key7' ? 4 : 3, out = [p];
+  for (let i = 1; i < n; i++) out.push(up(out[i - 1], 2));
+  return out;
+}
+
 // Editors: Channel Rack (step sequencer), Piano Roll, Instrument (synth editor + arpeggiator).
 
 const Panels = {
@@ -56,7 +72,7 @@ const Rack = {
         for (const k in pat.steps) { const a = pat.steps[k]; pat.steps[k] = Array.from({ length: len }, (_, i) => a[i] ?? (len > a.length ? a[i % a.length] : 0)); }
         pat.len = len;
       }, false),
-    }), [[16, '16 steps'], [32, '32 steps'], [64, '64 steps']], pat.len);
+    }), [[12, '12 steps'], [16, '16 steps'], [24, '24 steps'], [32, '32 steps'], [48, '48 steps'], [64, '64 steps']], pat.len);
     const kitSel = options(h('select', { onchange: (e) => App.mutate(() => (tr.kit = e.target.value), true) }), Object.keys(DRUM_KITS).map((k) => [k, k + ' kit']), tr.kit);
     const swing = knob({ label: 'Swing', norm: (tr.swing || 0) / 0.6, def: 0, size: 34, text: (n) => Math.round(n * 100) + '%', onInput: (n) => (tr.swing = n * 0.6), onDone: () => App.markDirty() });
     panel.append(h('div', { class: 'panel-head' },
@@ -151,7 +167,8 @@ const Rack = {
     let col = -1;
     if (tr && beat != null) {
       const pat = tr.patterns[tr.curPattern];
-      const c = tr.clips.find((c) => c.pattern === tr.curPattern && beat >= c.start && beat < c.start + c.length);
+      const ov = Engine.override && Engine.override.P.tracks[0].id === tr.id ? Engine.override.P.tracks[0].clips : tr.clips;
+      const c = ov.find((c) => c.pattern === tr.curPattern && beat >= c.start && beat < c.start + c.length);
       if (c && pat) col = (Math.floor((beat - c.start) * 4) + (c.off || 0)) % pat.len;
     }
     if (col === this.curCol) return;
@@ -190,7 +207,7 @@ const Piano = {
     if (this.clip !== c) { this.sel.clear(); this.clip = c; }
     this.tr = tr; this.c = c;
     this.steps = Math.round(c.length * 4);
-    const instSel = options(h('select', { onchange: (e) => setInstrument(tr, e.target.value) }), instrumentOptions(), tr.inst.name);
+    const instSel = options(h('select', { onchange: (e) => setInstrument(tr, e.target.value) }), instrumentOptions(), instValue(tr.inst));
     const snapSel = options(h('select', { onchange: (e) => { this.snap = +e.target.value; this.draw(); } }), SNAPS.map(([l, v]) => [v, l]), this.snap);
     const lenSel = options(h('select', { onchange: (e) => (App.noteLen = +e.target.value) }), [[0.5, '1/32'], [1, '1/16'], [2, '1/8'], [4, '1/4'], [8, '1/2'], [16, '1 bar']], App.noteLen);
     const barsIn = h('input', { type: 'number', min: 0.25, max: 64, step: 0.25, value: c.length / 4, title: 'Clip length in bars', onchange: (e) => App.mutate(() => (c.length = clamp(+e.target.value || 1, 0.25, 64) * 4)) });
@@ -201,7 +218,11 @@ const Piano = {
       h('label', { class: 'field' }, 'Snap', snapSel),
       h('label', { class: 'field' }, 'New note', lenSel),
       h('label', { class: 'field' }, 'Bars', barsIn),
-      h('button', { title: 'Snap selected notes (or all) to the grid', onclick: () => this.quantize() }, 'Quantize'),
+      h('label', { class: 'field', title: 'Clicking adds a whole chord' }, 'Chord', options(h('select', { onchange: (e) => (this.chord = e.target.value) }), Object.keys(CHORD_TYPES), this.chord)),
+      h('label', { class: 'field', title: 'New and moved notes stay in the song key' }, h('input', { type: 'checkbox', checked: this.scaleLock, onchange: (e) => (this.scaleLock = e.target.checked) }), 'Scale lock'),
+      h('label', { class: 'field', title: 'Show notes from other instrument tracks' }, h('input', { type: 'checkbox', checked: this.ghosts, onchange: (e) => { this.ghosts = e.target.checked; this.draw(); } }), 'Ghosts'),
+      h('button', { title: 'Snap selected notes (or all) to the grid (Ctrl+Q)', onclick: () => this.quantize() }, 'Quantize'),
+      h('button', { title: 'More tools', onclick: (e) => this.toolsMenu(e) }, 'Tools ▾'),
       h('button', { title: 'Transpose down an octave', onclick: () => this.transpose(-12) }, '−8va'),
       h('button', { title: 'Transpose up an octave', onclick: () => this.transpose(12) }, '+8va'),
       h('button', { class: 'primary', onclick: () => { P.loop = { on: true, start: c.start, end: c.start + c.length }; App.syncTop(); TL.draw(); App.playhead = c.start; App.play(); } }, '▶ Loop clip'),
@@ -271,11 +292,26 @@ const Piano = {
     }
     const sn = this.snap || 1;
     for (let s = 0; s <= this.steps + 1e-6; s += sn < 1 ? sn : 1) {
-      g.fillStyle = Math.abs(s % 16) < 1e-6 ? '#4a5160' : Math.abs(s % 4) < 1e-6 ? '#323843' : '#24282f';
+      g.fillStyle = Math.abs(s % (4 * App.bpb())) < 1e-6 ? '#4a5160' : Math.abs(s % 4) < 1e-6 ? '#323843' : '#24282f';
       g.fillRect(Math.round(s * this.cw), 0, 1, H);
     }
     g.fillStyle = 'rgba(0,0,0,0.35)';
     g.fillRect(this.steps * this.cw, 0, W, H);
+    if (this.ghosts) {
+      g.fillStyle = 'rgba(200,205,220,0.13)';
+      for (const t of P.tracks) {
+        if (t.type !== 'synth') continue;
+        for (const oc of t.clips) {
+          if (oc === c || oc.start >= c.start + c.length || oc.start + oc.length <= c.start) continue;
+          const off = (oc.start - c.start) * 4;
+          for (const n of oc.notes) {
+            const ss = n.s + off;
+            if (ss + n.d < 0 || ss > this.steps || n.p < this.lo || n.p > this.hi) continue;
+            g.fillRect(ss * this.cw + 1, (this.hi - n.p) * this.rh + 2, Math.max(3, n.d * this.cw - 2), this.rh - 4);
+          }
+        }
+      }
+    }
     for (const n of c.notes) {
       const x = n.s * this.cw, y = (this.hi - n.p) * this.rh, w = Math.max(4, n.d * this.cw - 2);
       const sel = this.sel.has(n);
@@ -341,10 +377,17 @@ const Piano = {
     } else {
       if (s >= this.steps) return;
       const st = this.qf(s);
-      note = { p, s: st, d: Math.min(App.noteLen, this.steps - st), v: 0.8 };
-      c.notes.push(note);
+      if (this.scaleLock) p = this.lock(p);
+      const d0 = Math.min(App.noteLen, this.steps - st);
       this.sel.clear();
-      this.sel.add(note);
+      for (const pp of chordNotes(p, this.chord, App.project)) {
+        const nn = { p: clamp(pp, this.lo, this.hi), s: st, d: d0, v: 0.8 };
+        c.notes.push(nn);
+        this.sel.add(nn);
+        if (pp === p) note = nn;
+      }
+      note = note || [...this.sel][0];
+      [...this.sel].slice(1).forEach((x) => this.preview(x.p));
     }
     this.preview(note.p);
     this.dragging = true;
@@ -359,7 +402,7 @@ const Piano = {
       const ds = this.q(x / this.cw - s0), dp = (this.hi - Math.floor(y / this.rh)) - p0;
       if (mode === 'move') {
         const minS = Math.min(...orig.map((o) => o.s));
-        group.forEach((n, i) => { n.s = Math.max(0, orig[i].s + Math.max(-minS, ds)); n.p = clamp(orig[i].p + dp, this.lo, this.hi); });
+        group.forEach((n, i) => { n.s = Math.max(0, orig[i].s + Math.max(-minS, ds)); n.p = clamp(orig[i].p + dp, this.lo, this.hi); if (this.scaleLock) n.p = this.lock(n.p); });
         if (note.p !== lastP) { lastP = note.p; this.preview(note.p); }
       } else {
         group.forEach((n, i) => (n.d = Math.max(this.snap || 0.25, this.q(orig[i].d + ds))));
@@ -410,6 +453,36 @@ const Piano = {
     window.addEventListener('mouseup', up);
   },
   targets() { return this.sel.size ? [...this.sel] : this.c.notes; },
+  chord: 'Single note',
+  scaleLock: false,
+  ghosts: true,
+  lock(p) {
+    const P = App.project, mask = scaleMask(P.key, P.scale);
+    for (let d = 0; d < 7; d++) { if (mask[(((p + d) % 12) + 12) % 12]) return p + d; if (mask[(((p - d) % 12) + 12) % 12]) return p - d; }
+    return p;
+  },
+  toolsMenu(e) {
+    const op = (fn, msg) => () => { if (!this.c) return; App.mutate(() => fn(this.targets()), false); if (msg) toast(msg); };
+    Menu.show(e.clientX, e.clientY + 12, [
+      { label: 'Strum (roll the chord)', action: op((ns) => { const byStart = {}; ns.forEach((n) => (byStart[n.s.toFixed(2)] ||= []).push(n)); Object.values(byStart).forEach((g) => g.sort((a, b) => a.p - b.p).forEach((n, i) => { n.s += i * 0.35; n.d = Math.max(0.25, n.d - i * 0.35); })); }, 'Strummed') },
+      { label: 'Humanize (timing + velocity)', action: op((ns) => ns.forEach((n) => { n.s = Math.max(0, Math.round((n.s + (Math.random() - 0.5) * 0.25) * 100) / 100); n.v = clamp((n.v ?? 0.8) + (Math.random() - 0.5) * 0.25, 0.2, 1); }), 'Humanized') },
+      { label: 'Randomize velocity', action: op((ns) => ns.forEach((n) => (n.v = Math.round((0.45 + Math.random() * 0.55) * 100) / 100))) },
+      { label: 'Legato (fill gaps)', action: op((ns) => { const starts = [...new Set(this.c.notes.map((n) => n.s))].sort((a, b) => a - b); ns.forEach((n) => { const nx = starts.find((x) => x > n.s + 1e-6); n.d = (nx ?? this.steps) - n.s; }); }, 'Legato') },
+      { label: 'Reverse', action: op((ns) => { const lo = Math.min(...ns.map((n) => n.s)), hi = Math.max(...ns.map((n) => n.s + n.d)); ns.forEach((n) => (n.s = lo + hi - (n.s + n.d))); }) },
+      { label: 'Double speed', action: op((ns) => { const lo = Math.min(...ns.map((n) => n.s)); ns.forEach((n) => { n.s = lo + (n.s - lo) / 2; n.d = Math.max(0.25, n.d / 2); }); }) },
+      { label: 'Half speed', action: op((ns) => { const lo = Math.min(...ns.map((n) => n.s)); ns.forEach((n) => { n.s = lo + (n.s - lo) * 2; n.d *= 2; }); }) },
+      { label: 'Snap pitches to key', action: op((ns) => ns.forEach((n) => (n.p = this.lock(n.p))), 'Notes moved into the key') },
+      '-',
+      { label: 'Duplicate selection', key: 'Ctrl+B', action: () => this.dupSel() },
+      { label: 'Select all', key: 'Ctrl+A', action: () => this.selectAll() },
+    ]);
+  },
+  dupSel() {
+    if (!this.c || !this.sel.size) return false;
+    const ns = [...this.sel], lo = Math.min(...ns.map((n) => n.s)), hi = Math.max(...ns.map((n) => n.s + n.d));
+    App.mutate(() => { const add = ns.map((n) => ({ ...n, s: n.s + (hi - lo) })); this.c.notes.push(...add); this.sel = new Set(add); }, false);
+    return true;
+  },
   quantize() {
     if (!this.c) return;
     const sn = this.snap || 1;
@@ -451,6 +524,8 @@ const SYN_SPECS = {
   rate: { label: 'Rate', min: 0.05, max: 20, def: 5, log: true, unit: 'Hz' }, depth: { label: 'Depth', min: 0, max: 1, def: 0, unit: '%' },
   amt: { label: 'Pitch env', min: -24, max: 24, def: 0 }, time: { label: 'Time', min: 0.005, max: 1, def: 0.05, log: true, unit: 's' },
   gain: { label: 'Volume', min: 0, max: 1.5, def: 0.5, unit: '%' },
+  fm: { label: 'FM amount', min: 0, max: 1, def: 0, unit: '%' },
+  glide: { label: 'Glide', min: 0.005, max: 0.6, def: 0.08, log: true, unit: 's' },
 };
 const USER_PRESETS_KEY = 'studio-user-presets';
 function userPresets() { try { return JSON.parse(localStorage.getItem(USER_PRESETS_KEY) || '{}'); } catch (e) { return {}; } }
@@ -472,7 +547,7 @@ const Inst = {
         if (v.startsWith('user:')) { const nm = v.slice(5); App.mutate(() => (tr.inst = { kind: 'synth', name: nm, patch: clone(ups[nm]) })); }
         else setInstrument(tr, v);
       },
-    }), optsList, inst.kind === 'synth' && ups[inst.name] ? 'user:' + inst.name : inst.name);
+    }), optsList, inst.kind === 'synth' && ups[inst.name] ? 'user:' + inst.name : instValue(inst));
     const head = h('div', { class: 'panel-head' }, h('h3', {}, 'Instrument'), h('span', { style: `color:${tr.color};font-weight:600` }, tr.name), sel);
     if (inst.kind === 'synth') {
       head.append(h('button', { onclick: () => { const n = prompt('Name your preset', inst.name + ' (mine)'); if (!n) return; const u = userPresets(); u[n] = clone(inst.patch); try { localStorage.setItem(USER_PRESETS_KEY, JSON.stringify(u)); } catch (e) {} inst.name = n; App.markDirty(); this.render(); toast('Saved preset "' + n + '"'); } }, 'Save preset'));
@@ -489,7 +564,8 @@ const Inst = {
         h('div', { class: 'hint2' }, Sampler.ready(inst.name) ? 'Loaded ✓' : 'Loading…'),
         h('div', { class: 'hint2', style: 'margin-top:8px' }, 'Samples: Salamander Grand Piano & tonejs-instruments (CC-BY 3.0)')));
       if (!Sampler.ready(inst.name)) Sampler.load(inst.name, Engine.ctx).then(() => App.tab === 'inst' && this.render());
-    } else body.append(...this.synthSections(tr));
+    } else if (inst.kind === 'sample') body.append(...SamplerUI.sections(tr));
+    else body.append(...this.synthSections(tr));
     body.append(this.arpSection(tr));
     panel.append(body, this.keyboard(tr));
   },
@@ -511,6 +587,10 @@ const Inst = {
     return [
       oscSec(0), oscSec(1),
       sec('Sub & Noise', K(p, 'sub'), K(p, 'noise'), K(p.penv, 'amt'), K(p.penv, 'time'), K(p, 'gain')),
+      h('div', { class: 'section' }, h('div', { class: 'sec-title' }, 'FM & Glide',
+        h('label', { title: 'Mono: one note at a time. Overlapping notes slide into each other (808 glides).' }, h('input', { type: 'checkbox', checked: !!p.mono, onchange: (e) => App.mutate(() => (p.mono = e.target.checked), false) }), ' Mono / slide')),
+        h('div', { class: 'knobs' }, K(p, 'fm'), K(p, 'glide')),
+        h('div', { class: 'hint2', style: 'max-width:200px' }, 'FM: oscillator 2 bends oscillator 1 for bells, e-pianos and growls. Slide: overlap notes in the piano roll.')),
       h('div', { class: 'section' }, h('div', { class: 'sec-title' }, 'Filter ', fType), h('div', { class: 'knobs' }, K(p.filter, 'cutoff'), K(p.filter, 'res'), K(p.filter, 'env'), K(p.filter, 'key'), K(p.filter, 'drive'))),
       sec('Filter envelope', K(p.fenv, 'a'), K(p.fenv, 'd'), K(p.fenv, 's'), K(p.fenv, 'r')),
       sec('Amp envelope', K(p.amp, 'a'), K(p.amp, 'd'), K(p.amp, 's'), K(p.amp, 'r')),

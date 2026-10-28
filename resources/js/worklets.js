@@ -395,6 +395,35 @@ class GateProcessor extends AudioWorkletProcessor {
   }
 }
 
+class SidechainProcessor extends AudioWorkletProcessor {
+  static get parameterDescriptors() {
+    const k = (name, def, min, max) => ({ name, defaultValue: def, minValue: min, maxValue: max, automationRate: 'k-rate' });
+    return [k('thr', -28, -80, 0), k('ratio', 8, 1, 40), k('att', 1, 0.05, 200), k('rel', 160, 5, 2000)];
+  }
+  constructor() { super(); this.env = 0; this.gr = 0; this.n = 0; }
+  process(inputs, outputs, params) {
+    const sig = inputs[0], key = inputs[1], out = outputs[0];
+    const nfr = out[0].length;
+    const thr = params.thr[0], ratio = params.ratio[0];
+    const aA = 1 - Math.exp(-1 / ((params.att[0] / 1000) * sampleRate)), aR = 1 - Math.exp(-1 / ((params.rel[0] / 1000) * sampleRate));
+    let maxGr = 0;
+    for (let i = 0; i < nfr; i++) {
+      let k = 0;
+      if (key && key.length) for (let c = 0; c < key.length; c++) k = Math.max(k, Math.abs(key[c][i]));
+      this.env += (k - this.env) * (k > this.env ? aA : aR);
+      const db = 20 * Math.log10(this.env + 1e-9);
+      const red = db > thr ? (db - thr) * (1 - 1 / ratio) : 0;
+      if (red > maxGr) maxGr = red;
+      const g = Math.pow(10, -red / 20);
+      for (let c = 0; c < out.length; c++) out[c][i] = sig && sig.length ? sig[Math.min(c, sig.length - 1)][i] * g : 0;
+    }
+    this.gr = Math.max(maxGr, this.gr * 0.9);
+    if (++this.n >= 8) { this.n = 0; this.port.postMessage(this.gr); }
+    return true;
+  }
+}
+
+registerProcessor('sidechain', SidechainProcessor);
 registerProcessor('gate', GateProcessor);
 registerProcessor('autotune', AutoTuneProcessor);
 registerProcessor('recorder', RecorderProcessor);

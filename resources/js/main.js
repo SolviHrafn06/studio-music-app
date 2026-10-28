@@ -8,13 +8,16 @@ function typingActive() {
   return App.typing && tr && (tr.type === 'synth' || tr.type === 'drums');
 }
 function onKeyDown(e) {
+  if (/^F(5|6|7|8|9|10|11|12)$/.test(e.key) || (e.ctrlKey && e.key.toLowerCase() === 'r')) e.preventDefault();
   if (isTyping(e)) return;
+  const fk = { F5: () => toggleBottom(), F6: () => Panels.show('rack'), F7: () => Panels.show('piano'), F8: () => Panels.show('browser'), F9: () => Panels.show('mixer'), F10: () => AudioSettings.open(), F11: () => Panels.show('fx'), F12: () => Panels.show('vocal') }[e.key];
+  if (fk) { fk(); return; }
   const k = e.key.toLowerCase();
   const inPiano = App.tab === 'piano' && Piano.c;
   if (e.ctrlKey || e.metaKey) {
     const map = {
       z: () => (e.shiftKey ? App.redo() : App.undo()), y: () => App.redo(), s: () => saveProject(), o: () => openProject(),
-      e: () => exportSong('wav'), d: () => Edit.duplicate(), t: () => Edit.split(), l: () => toggleLoop(),
+      e: () => exportSong('wav'), r: () => exportSong('wav'), q: () => inPiano && Piano.quantize(), b: () => (inPiano && Piano.dupSel()) || Edit.duplicate(), d: () => Edit.duplicate(), t: () => Edit.split(), l: () => toggleLoop(),
       c: () => (inPiano && Piano.copy()) || Edit.copy(), x: () => (inPiano && Piano.copy() && Piano.delSel()) || Edit.cut(),
       v: () => (inPiano && Piano.paste()) || Edit.paste(), a: () => (inPiano ? Piano.selectAll() : Edit.selectAll()),
     };
@@ -51,6 +54,18 @@ function onKeyUp(e) {
   if (e.key === ' ') e.preventDefault();
   App.noteOff('k' + e.key.toLowerCase());
 }
+function toggleBottom() {
+  const cur = getComputedStyle(document.body).getPropertyValue('--bottom-h').trim();
+  if (parseInt(cur) > 60) { App._bh = cur; document.body.style.setProperty('--bottom-h', '38px'); }
+  else document.body.style.setProperty('--bottom-h', App._bh || '360px');
+  setTimeout(() => TL.draw(), 50);
+}
+function toggleMode() {
+  App.patMode = !App.patMode;
+  $('#btn-mode').textContent = App.patMode ? 'PAT' : 'SONG';
+  $('#btn-mode').classList.toggle('pat', App.patMode);
+  if (Engine.playing) { App.stop(); App.play(); }
+}
 function toggleMetro() { Engine.metronome = !Engine.metronome; $('#btn-metro').classList.toggle('on', Engine.metronome); }
 function toggleLoop() { App.mutate(() => (App.project.loop.on = !App.project.loop.on), false); App.syncTop(); }
 function zoom(f) {
@@ -69,7 +84,7 @@ function frame() {
     const x = b * App.ppb;
     $('#playhead').style.left = x + 'px';
     $('#ruler-head').style.left = x + 'px';
-    const bar = Math.floor(b / 4) + 1, beat = Math.floor(b % 4) + 1, six = Math.floor((b * 4) % 4) + 1;
+    const bpb = App.bpb(), bar = Math.floor(b / bpb) + 1, beat = Math.floor(b % bpb) + 1, six = Math.floor((b * 4) % 4) + 1;
     $('#time-bars').textContent = `${bar}.${beat}.${six}`;
     const secs = (b * 60) / App.project.bpm;
     $('#time-secs').textContent = `${Math.floor(secs / 60)}:${(secs % 60).toFixed(1).padStart(4, '0')}`;
@@ -115,6 +130,8 @@ function wireTopBar() {
   $('#btn-rec').onclick = () => App.toggleRecord();
   $('#btn-loop').onclick = toggleLoop;
   $('#btn-metro').onclick = toggleMetro;
+  $('#btn-mode').onclick = toggleMode;
+  $('#timesig').onchange = (e) => { App.mutate(() => (App.project.bpb = +e.target.value), false); $('#snap').options[0].value = App.project.bpb; if ($('#snap').selectedIndex === 0) App.snap = App.project.bpb; };
   $('#btn-typing').onclick = () => { App.typing = !App.typing; $('#btn-typing').classList.toggle('on', App.typing); toast(App.typing ? 'Musical typing ON: A–K play notes' : 'Musical typing OFF'); };
   $('#btn-undo').onclick = () => App.undo();
   $('#btn-redo').onclick = () => App.redo();
@@ -209,6 +226,7 @@ async function boot() {
     if (!opened && mode === 'open') { App.load(emptyProject()); await openProject(); opened = true; }
     if (!opened) { App.load(mode === 'empty' ? emptyProject() : demoProject()); toast(mode === 'empty' ? 'New project ready.' : 'Loaded a demo song — press Space to play it!', 4000); }
     Autosave.prune();
+    Library.init();
     AudioSettings.restore();
     MIDI.init();
     setInterval(() => App.dirty && Autosave.save(), 60000);

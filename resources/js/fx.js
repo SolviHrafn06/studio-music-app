@@ -456,6 +456,29 @@ const CABS = {
   'Off (DI)':    [],
 };
 Object.assign(FX, {
+  scomp: {
+    name: 'Sidechain Comp', icon: '⇊',
+    params: [
+      { id: 'src', label: 'Key from', dynamic: 'tracks', def: '' },
+      { id: 'thr', label: 'Threshold', min: -60, max: 0, def: -28, unit: 'dB' },
+      { id: 'ratio', label: 'Ratio', min: 1, max: 20, def: 8, log: true, unit: ':1' },
+      { id: 'att', label: 'Attack', min: 0.1, max: 50, def: 1, log: true, unit: 'ms' },
+      { id: 'rel', label: 'Release', min: 20, max: 800, def: 160, log: true, unit: 'ms' },
+    ],
+    create(ctx) {
+      const input = ctx.createGain(), key = ctx.createGain();
+      const node = new AudioWorkletNode(ctx, 'sidechain', { numberOfInputs: 2, numberOfOutputs: 1, outputChannelCount: [2] });
+      input.connect(node, 0, 0);
+      key.connect(node, 0, 1);
+      let gr = 0;
+      node.port.onmessage = (e) => (gr = e.data);
+      return {
+        input, output: node, key,
+        reduction: () => -gr,
+        set(p) { const q = (k) => node.parameters.get(k); q('thr').value = p.thr; q('ratio').value = p.ratio; q('att').value = p.att; q('rel').value = p.rel; },
+      };
+    },
+  },
   amp: {
     name: 'Amp', icon: '🎸',
     params: [
@@ -589,7 +612,7 @@ const CHAIN_PRESETS = {
   },
 };
 
-const FX_ORDER = ['gate', 'amp', 'cab', 'eq', 'comp', 'sat', 'filter', 'trem', 'chorus', 'phaser', 'doubler', 'deess', 'delay', 'reverb', 'crush', 'width', 'pump', 'limiter'];
+const FX_ORDER = ['gate', 'amp', 'cab', 'eq', 'comp', 'scomp', 'sat', 'filter', 'trem', 'chorus', 'phaser', 'doubler', 'deess', 'delay', 'reverb', 'crush', 'width', 'pump', 'limiter'];
 
 function newFx(type, over = {}) {
   const p = {};

@@ -37,6 +37,7 @@
       <button id="btn-export" class="outline" title="Export WAV, MP3 or stems">Export ▾</button>
     </div>
     <div class="group transport">
+      <button id="btn-mode" class="mode-btn" title="SONG plays the whole arrangement · PAT loops just the pattern/clip you are editing (like FL Studio)">SONG</button>
       <button id="btn-home" title="Go to start (Home)">⏮</button>
       <button id="btn-play" class="play" title="Play / Stop (Space)">▶</button>
       <button id="btn-stop" title="Stop">■</button>
@@ -48,6 +49,7 @@
     <label class="field">BPM <input id="bpm" type="number" min="40" max="240" value="120"></label>
     <label class="field">Key <select id="key"></select></label>
     <label class="field"><select id="scale"></select></label>
+    <label class="field" title="Time signature"><select id="timesig"><option value="2">2/4</option><option value="3">3/4</option><option value="4" selected>4/4</option><option value="5">5/4</option><option value="6">6/4</option><option value="7">7/4</option></select></label>
     <div class="spacer"></div>
     <span id="save-state" class="hint2"></span>
     <button id="btn-typing" class="toggle on" title="Musical typing: play notes with A–K keys">Keys</button>
@@ -118,6 +120,7 @@
   <script src="js/instruments.js"></script>
   <script src="js/sounds.js"></script>
   <script src="js/synth.js"></script>
+  <script src="js/sampler.js"></script>
   <script src="js/fx.js"></script>
   <script src="js/loops.js"></script>
   <script src="js/engine.js"></script>
@@ -128,6 +131,7 @@
   <script src="js/ui-vocal.js"></script>
   <script src="js/ui-browser.js"></script>
   <script src="js/ui-input.js"></script>
+  <script src="js/ui-library.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

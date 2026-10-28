@@ -334,6 +334,7 @@ const Sampler = {
 function playInstrument(ctx, dest, inst, midi, t, dur, vel = 0.8, reg = noop) {
   if (!inst) return { release: noop };
   if (inst.kind === 'sampler') return Sampler.play(ctx, dest, inst.name, midi, t, dur, vel, reg);
+  if (inst.kind === 'sample') return playSample(ctx, dest, inst, midi, t, dur, vel, reg);
   return playPatch(ctx, dest, inst.patch, midi, t, dur, vel, reg);
 }
 

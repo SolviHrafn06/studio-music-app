@@ -11,12 +11,13 @@ const Browser = {
     const panel = $('#panel-browser');
     panel.innerHTML = '';
     const P = App.project;
-    const cats = [['drums', '🥁 Drum beats', DRUM_LOOPS.length], ['chords', '🎹 Chord progressions', CHORD_LOOPS.length], ['bass', '🎸 Bass lines', CHORD_LOOPS.length], ['melody', '🎵 Melodies', MELODY_IDEAS.length], ['inst', '🎻 Instruments', Object.keys(INSTRUMENTS).length + Object.keys(SYNTH_PRESETS).length]];
+    const cats = [['mine', '📁 My samples', Library.items.length], ['drums', '🥁 Drum beats', DRUM_LOOPS.length], ['chords', '🎹 Chord progressions', CHORD_LOOPS.length], ['bass', '🎸 Bass lines', CHORD_LOOPS.length], ['melody', '🎵 Melodies', MELODY_IDEAS.length], ['inst', '🎻 Instruments', Object.keys(INSTRUMENTS).length + Object.keys(SYNTH_PRESETS).length]];
     const side = h('div', { class: 'br-side' }, cats.map(([k, l, n]) => h('button', { class: 'br-cat' + (this.cat === k ? ' active' : ''), onclick: () => { this.cat = k; this.render(); } }, h('span', {}, l), h('small', {}, n))),
       h('div', { class: 'hint2', style: 'margin-top:10px' }, `Everything follows your song key (${NOTE_NAMES[P.key]} ${P.scale}).`));
     const list = h('div', { class: 'br-list' });
     const tools = h('div', { class: 'br-tools' });
-    if (this.cat === 'drums') {
+    if (this.cat === 'mine') Library.render(list, tools);
+    else if (this.cat === 'drums') {
       tools.append(h('label', { class: 'field' }, h('input', { type: 'checkbox', checked: this.matchTempo, onchange: (e) => (this.matchTempo = e.target.checked) }), 'Also set song tempo to the beat\'s BPM'));
       for (const l of DRUM_LOOPS) list.append(this.row(l.name, `${l.genre} · ${l.bpm} BPM · ${l.kit} kit`, () => this.previewDrums(l), () => this.addDrums(l)));
     } else if (this.cat === 'chords' || this.cat === 'bass') {
