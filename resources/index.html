@@ -51,6 +51,7 @@
     <div class="spacer"></div>
     <span id="save-state" class="hint2"></span>
     <button id="btn-typing" class="toggle on" title="Musical typing: play notes with A–K keys">Keys</button>
+    <button id="btn-settings" title="Audio settings: input & output devices">⚙</button>
     <span id="midi-led" title="No MIDI keyboard connected">MIDI</span>
     <div class="group">
       <button id="btn-undo" title="Undo (Ctrl+Z)">↶</button>
@@ -65,6 +66,7 @@
       <button data-add="drums" onclick="addTrack('drums')">+ Drums</button>
       <button data-add="synth" onclick="addTrack('synth')">+ Instrument</button>
       <button data-add="audio" onclick="addTrack('audio')">+ Vocal / Audio</button>
+      <button onclick="addGuitarTrack()">🎸 + Guitar</button>
       <button id="btn-import">Import audio…</button>
       <span class="spacer"></span>
       <span id="hint">Click lane = new clip · drag empty = select · edges = trim · top corners = fades · right-click = menu · drop audio files here</span>
@@ -94,6 +96,7 @@
       <button data-tab="mixer">Mixer</button>
       <button data-tab="fx">Effects</button>
       <button data-tab="vocal" class="at-tab">Vocal Studio</button>
+      <button data-tab="input">Input &amp; Amp</button>
     </nav>
     <div id="panel-browser" class="panel active"></div>
     <div id="panel-rack" class="panel"></div>
@@ -102,6 +105,7 @@
     <div id="panel-mixer" class="panel"></div>
     <div id="panel-fx" class="panel"></div>
     <div id="panel-vocal" class="panel"></div>
+    <div id="panel-input" class="panel"></div>
   </section>
 
   <input type="file" id="file-audio" accept="audio/*,.wav,.mp3,.ogg,.flac,.m4a" hidden multiple>
@@ -123,6 +127,7 @@
   <script src="js/ui-mix.js"></script>
   <script src="js/ui-vocal.js"></script>
   <script src="js/ui-browser.js"></script>
+  <script src="js/ui-input.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

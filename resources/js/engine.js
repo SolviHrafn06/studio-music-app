@@ -440,43 +440,98 @@ const Engine = {
     if (App.project) this.sync(App.project);
   },
 
-  // ---- microphone / recording ----
-  async getMic() {
-    if (!this.mic) {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      });
-      this.micStream = stream;
-      this.mic = this.ctx.createMediaStreamSource(stream);
+  // ---- inputs (mics, audio interfaces, guitars) / monitoring / recording ----
+  inputs: new Map(),
+  monitors: new Set(),
+  async openInput(deviceId = 'default') {
+    const key = deviceId || 'default';
+    if (this.inputs.has(key)) return this.inputs.get(key);
+    const audio = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: 2 }, latency: { ideal: 0.003 } };
+    if (key !== 'default') audio.deviceId = { exact: key };
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio }); }
+    catch (e) {
+      if (key === 'default') throw e;
+      toast('That input device is not available — using the default input.', 4000);
+      return this.openInput('default');
     }
-    return this.mic;
+    const ctx = this.ctx, src = ctx.createMediaStreamSource(stream);
+    const split = ctx.createChannelSplitter(2);
+    src.connect(split);
+    const mono = ctx.createGain();
+    mono.channelCount = 1; mono.channelCountMode = 'explicit'; mono.channelInterpretation = 'speakers';
+    src.connect(mono);
+    const c1 = ctx.createGain(), c2 = ctx.createGain();
+    split.connect(c1, 0); split.connect(c2, 1);
+    const settings = stream.getAudioTracks()[0].getSettings ? stream.getAudioTracks()[0].getSettings() : {};
+    const e = { key, stream, src, nodes: { mono, '1': c1, '2': c2, stereo: src }, chans: settings.channelCount || 1, label: stream.getAudioTracks()[0].label };
+    this.inputs.set(key, e);
+    return e;
   },
-
+  // the (gain-adjusted) input signal feeding a track, according to the track's input settings
+  async trackInput(tr) {
+    const n = this.nodes.get(tr.id);
+    if (!n) throw new Error('track not ready');
+    const inp = tr.input || { device: 'default', ch: 'mono' };
+    const e = await this.openInput(inp.device);
+    const srcNode = e.nodes[inp.ch] || e.nodes.mono;
+    if (!n.inGain) {
+      n.inGain = this.ctx.createGain();
+      n.inMeter = this.ctx.createAnalyser();
+      n.inMeter.fftSize = 4096;
+      n.inGain.connect(n.inMeter);
+    }
+    if (n.inSrc !== srcNode) {
+      if (n.inSrc) try { n.inSrc.disconnect(n.inGain); } catch (x) {}
+      srcNode.connect(n.inGain);
+      n.inSrc = srcNode;
+    }
+    n.inGain.gain.value = Math.pow(10, (tr.inGain || 0) / 20);
+    return n.inGain;
+  },
+  async setTrackMonitor(trackId, on) {
+    const tr = App.track(trackId), n = this.nodes.get(trackId);
+    if (!tr || !n) return;
+    const node = await this.trackInput(tr);
+    try { node.disconnect(n.input); } catch (x) {}
+    if (on) { node.connect(n.input); this.monitors.add(trackId); }
+    else this.monitors.delete(trackId);
+    this.monitorId = this.monitors.size ? [...this.monitors][0] : null;
+  },
+  // legacy single-monitor helper: monitor exactly this track (or none)
   async setMonitor(trackId) {
-    if (this.monitorTo) {
-      try { this.mic.disconnect(this.monitorTo); } catch (e) {}
-      this.monitorTo = null;
-      this.monitorId = null;
-    }
-    if (!trackId) return;
-    const mic = await this.getMic();
-    const n = this.nodes.get(trackId);
-    if (!n) return;
-    mic.connect(n.input);
-    this.monitorTo = n.input;
-    this.monitorId = trackId;
+    for (const id of [...this.monitors]) if (id !== trackId) await this.setTrackMonitor(id, false);
+    if (trackId) await this.setTrackMonitor(trackId, true);
   },
+  async refreshInputs(P) {
+    // re-route tracks whose input changed and close devices nobody uses any more
+    for (const tr of P.tracks) {
+      const n = this.nodes.get(tr.id);
+      if (tr.type === 'audio' && n && n.inGain) await this.trackInput(tr);
+    }
+    const used = new Set(P.tracks.filter((t) => t.type === 'audio').map((t) => (t.input && t.input.device) || 'default'));
+    for (const [k, e] of this.inputs) {
+      const live = [...this.nodes.values()].some((n) => n.inSrc && Object.values(e.nodes).includes(n.inSrc));
+      if (!used.has(k) && !live) { e.stream.getTracks().forEach((t) => t.stop()); this.inputs.delete(k); }
+    }
+  },
+  async setOutput(deviceId) {
+    if (!this.ctx.setSinkId) throw new Error('Choosing an output device is not supported here');
+    await this.ctx.setSinkId(deviceId === 'default' ? '' : deviceId);
+  },
+  latencyMs() { return Math.round(((this.ctx.baseLatency || 0) + (this.ctx.outputLatency || 0)) * 1000); },
 
   async startRecord(trackId, fromBeat) {
-    const mic = await this.getMic();
+    const tr = App.track(trackId);
+    const inNode = await this.trackInput(tr);
     const rec = new AudioWorkletNode(this.ctx, 'recorder', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
     const P = App.project;
-    const info = { trackId, chunks: [], first: null, startBeat: Math.floor(fromBeat * 4 + 1e-6) / 4, loop: P.loop.on && P.loop.end > P.loop.start ? { ...P.loop } : null, bpm: P.bpm };
+    const info = { trackId, chunks: [], first: null, startBeat: Math.floor(fromBeat * 4 + 1e-6) / 4, loop: P.loop.on && P.loop.end > P.loop.start ? { ...P.loop } : null, bpm: P.bpm, inNode };
     rec.port.onmessage = (e) => {
       if (info.first === null) info.first = e.data.t;
       info.chunks.push(e.data.d);
     };
-    mic.connect(rec);
+    inNode.connect(rec);
     rec.connect(this.silent);
     this.rec = rec;
     this.recInfo = info;
@@ -490,7 +545,7 @@ const Engine = {
     if (!info) return null;
     rec.port.postMessage('flush');
     await new Promise((r) => setTimeout(r, 120));
-    try { this.mic.disconnect(rec); rec.disconnect(); } catch (e) {}
+    try { info.inNode.disconnect(rec); rec.disconnect(); } catch (e) {}
     this.rec = null;
     this.recInfo = null;
     if (!info.chunks.length) return null;

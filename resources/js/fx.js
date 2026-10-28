@@ -423,7 +423,173 @@ const FX = {
     },
   },
 };
-const FX_ORDER = ['eq', 'comp', 'sat', 'filter', 'chorus', 'phaser', 'doubler', 'deess', 'delay', 'reverb', 'crush', 'width', 'pump', 'limiter'];
+
+// ---- guitar: amp models, cabinets, gate, tremolo ----
+const AMP_MODELS = {
+  'Clean':   { hp: 70,  mid: [700, 0],   drive: [2.5, 0],  curve: 'tube', lp: 9500, out: 0.45 },
+  'Crunch':  { hp: 90,  mid: [900, 3],   drive: [9, 2.5],  curve: 'tube', lp: 7500, out: 0.3 },
+  'Lead':    { hp: 110, mid: [1000, 5],  drive: [20, 5],   curve: 'tube', lp: 6800, out: 0.22 },
+  'Metal':   { hp: 150, mid: [1300, 4],  drive: [40, 10],  curve: 'hard', lp: 6200, out: 0.2 },
+  'Fuzz':    { hp: 60,  mid: [800, -2],  drive: [70, 0],   curve: 'fuzz', lp: 5200, out: 0.2 },
+  'Bass':    { hp: 30,  mid: [500, 2],   drive: [4, 0],    curve: 'tape', lp: 5000, out: 0.4 },
+};
+const _ampCurves = {};
+function ampCurve(type) {
+  if (_ampCurves[type]) return _ampCurves[type];
+  const n = 4096, c = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    let y;
+    if (type === 'tube') y = x >= 0 ? Math.tanh(1.6 * x) : Math.tanh(1.1 * x) * 0.9; // asymmetric = warm even harmonics
+    else if (type === 'hard') y = Math.max(-0.9, Math.min(0.9, Math.tanh(2.5 * x) * 1.05));
+    else if (type === 'fuzz') y = Math.sign(x) * (1 - Math.exp(-4 * Math.abs(x)));
+    else y = Math.tanh(x);
+    c[i] = y;
+  }
+  return (_ampCurves[type] = c);
+}
+const CABS = {
+  '1x12 Combo':  [['highpass', 90, 0.7], ['peaking', 120, 1.2, 3], ['peaking', 2500, 1.5, 3], ['lowpass', 5500, 0.9], ['lowpass', 6500, 0.7]],
+  '2x12 Open':   [['highpass', 75, 0.7], ['peaking', 110, 1, 2], ['peaking', 3000, 1.2, 2], ['lowpass', 6500, 0.8], ['lowpass', 7500, 0.7]],
+  '4x12 Closed': [['highpass', 70, 0.8], ['peaking', 100, 1.4, 5], ['peaking', 450, 1.2, -4], ['peaking', 2200, 1.4, 4], ['lowpass', 4800, 1], ['lowpass', 5500, 0.7]],
+  '4x10 Bass':   [['highpass', 40, 0.7], ['peaking', 80, 1, 4], ['peaking', 800, 1, -2], ['lowpass', 4000, 0.8], ['lowpass', 5000, 0.7]],
+  'Off (DI)':    [],
+};
+Object.assign(FX, {
+  amp: {
+    name: 'Amp', icon: '🎸',
+    params: [
+      { id: 'model', label: 'Amp', options: Object.keys(AMP_MODELS), def: 'Crunch' },
+      { id: 'gain', label: 'Gain', min: 0, max: 1, def: 0.5, unit: '%' },
+      { id: 'bass', label: 'Bass', min: -12, max: 12, def: 0, unit: 'dB' },
+      { id: 'mid', label: 'Mid', min: -12, max: 12, def: 0, unit: 'dB' },
+      { id: 'treble', label: 'Treble', min: -12, max: 12, def: 0, unit: 'dB' },
+      { id: 'presence', label: 'Presence', min: -12, max: 12, def: 2, unit: 'dB' },
+      { id: 'master', label: 'Master', min: -24, max: 12, def: 0, unit: 'dB', auto: true },
+    ],
+    create(ctx) {
+      const mk = (t, f, q, g) => { const b = ctx.createBiquadFilter(); b.type = t; b.frequency.value = f; if (q != null) b.Q.value = q; if (g != null) b.gain.value = g; return b; };
+      const input = ctx.createGain(), hp = mk('highpass', 80, 0.7), pre = mk('peaking', 800, 0.8, 0);
+      const g1 = ctx.createGain(), s1 = ctx.createWaveShaper(), inter = mk('lowpass', 7000, 0.7), g2 = ctx.createGain(), s2 = ctx.createWaveShaper(), dc = mk('highpass', 25, 0.7);
+      const bass = mk('lowshelf', 120, null, 0), mid = mk('peaking', 700, 0.7, 0), treble = mk('highshelf', 3200, null, 0), pres = mk('highshelf', 5000, null, 0), lp = mk('lowpass', 8000, 0.7), out = ctx.createGain();
+      s1.oversample = s2.oversample = '4x';
+      input.connect(hp).connect(pre).connect(g1).connect(s1).connect(inter).connect(g2).connect(s2).connect(dc).connect(bass).connect(mid).connect(treble).connect(pres).connect(lp).connect(out);
+      let model = '';
+      return {
+        input, output: out, ap: { master: out.gain },
+        set(p, live) {
+          const M = AMP_MODELS[p.model] || AMP_MODELS.Crunch;
+          if (model !== p.model) { model = p.model; s1.curve = ampCurve(M.curve); s2.curve = M.drive[1] ? ampCurve(M.curve) : null; }
+          setP(hp.frequency, M.hp, live); setP(pre.frequency, M.mid[0], live); setP(pre.gain, M.mid[1], live);
+          setP(g1.gain, 0.6 + p.gain * M.drive[0], live);
+          setP(g2.gain, M.drive[1] ? 0.5 + p.gain * M.drive[1] : 1, live);
+          setP(bass.gain, p.bass, live); setP(mid.gain, p.mid, live); setP(treble.gain, p.treble, live); setP(pres.gain, p.presence, live);
+          setP(lp.frequency, M.lp, live);
+          setP(out.gain, M.out * dbToGain(p.master) * (M.drive[1] ? 0.7 : 1), live);
+        },
+      };
+    },
+  },
+  cab: {
+    name: 'Cabinet', icon: '▣',
+    params: [
+      { id: 'type', label: 'Speaker', options: Object.keys(CABS), def: '4x12 Closed' },
+      { id: 'mic', label: 'Mic tone', min: 0, max: 1, def: 0.5, unit: '%' },
+      { id: 'room', label: 'Room', min: 0, max: 1, def: 0.15, unit: '%' },
+    ],
+    create(ctx) {
+      const input = ctx.createGain(), out = ctx.createGain(), micF = ctx.createBiquadFilter(), roomIn = ctx.createGain(), roomD = ctx.createDelay(0.1), roomLp = ctx.createBiquadFilter(), roomFb = ctx.createGain();
+      micF.type = 'highshelf'; micF.frequency.value = 3500;
+      roomD.delayTime.value = 0.017; roomLp.type = 'lowpass'; roomLp.frequency.value = 3000; roomFb.gain.value = 0.35;
+      let chain = [], type = null;
+      const build = (t) => {
+        try { input.disconnect(); } catch (e) {}
+        chain.forEach((f) => { try { f.disconnect(); } catch (e) {} });
+        chain = (CABS[t] || []).map(([ty, f, q, g]) => { const b = ctx.createBiquadFilter(); b.type = ty; b.frequency.value = f; b.Q.value = q; if (g != null) b.gain.value = g; return b; });
+        let h = input;
+        for (const f of chain) { h.connect(f); h = f; }
+        h.connect(micF);
+      };
+      micF.connect(out);
+      micF.connect(roomIn).connect(roomD).connect(roomLp).connect(out);
+      roomLp.connect(roomFb).connect(roomD);
+      return {
+        input, output: out,
+        set(p, live) {
+          if (type !== p.type) { type = p.type; build(p.type); }
+          setP(micF.gain, (p.mic - 0.5) * 12, live);
+          setP(roomIn.gain, p.room * 0.5, live);
+          setP(out.gain, 1, live);
+        },
+      };
+    },
+  },
+  gate: {
+    name: 'Noise Gate', icon: '⊘',
+    params: [
+      { id: 'thr', label: 'Threshold', min: -90, max: -10, def: -55, unit: 'dB' },
+      { id: 'rel', label: 'Release', min: 10, max: 500, def: 80, log: true, unit: 'ms' },
+    ],
+    create(ctx) {
+      const g = new AudioWorkletNode(ctx, 'gate', { outputChannelCount: [2] });
+      return {
+        input: g, output: g,
+        reduction: () => -(g._red || 0),
+        set(p) { g.parameters.get('thr').value = p.thr; g.parameters.get('rel').value = p.rel; },
+      };
+    },
+  },
+  trem: {
+    name: 'Tremolo', icon: '∿',
+    params: [
+      { id: 'rate', label: 'Rate', options: ['1/16', '1/8', '1/8T', '1/4', '1/2'], def: '1/8' },
+      { id: 'depth', label: 'Depth', min: 0, max: 1, def: 0.5, unit: '%', auto: true },
+      { id: 'shape', label: 'Shape', options: ['Smooth', 'Choppy'], def: 'Smooth' },
+    ],
+    create(ctx, p, env) {
+      const g = ctx.createGain(), lfo = ctx.createOscillator(), lg = ctx.createGain();
+      lfo.start();
+      lfo.connect(lg).connect(g.gain);
+      return {
+        input: g, output: g, osc: [lfo], ap: { depth: lg.gain },
+        set(p, live) {
+          const beats = { '1/16': 0.25, '1/8': 0.5, '1/8T': 1 / 3, '1/4': 1, '1/2': 2 }[p.rate] || 0.5;
+          lfo.type = p.shape === 'Choppy' ? 'square' : 'sine';
+          setP(lfo.frequency, env.bpm / 60 / beats, live);
+          setP(g.gain, 1 - p.depth / 2, live);
+          setP(lg.gain, p.depth / 2, live);
+        },
+      };
+    },
+  },
+});
+
+// One-click signal chains for the Input & Amp tab
+const CHAIN_PRESETS = {
+  guitar: {
+    'Clean Sparkle': () => [newFx('gate', { thr: -62 }), newFx('comp', { thr: -24, ratio: 3, att: 15, makeup: 4 }), newFx('amp', { model: 'Clean', gain: 0.25, treble: 3, presence: 3 }), newFx('cab', { type: '2x12 Open', mic: 0.6 }), newFx('chorus', { mix: 0.25, depth: 0.4 }), newFx('reverb', { type: 'Hall', mix: 0.22 })],
+    'Funk Clean': () => [newFx('comp', { thr: -30, ratio: 6, att: 5, makeup: 4 }), newFx('amp', { model: 'Clean', gain: 0.35, mid: 2, treble: 4 }), newFx('cab', { type: '1x12 Combo' }), newFx('phaser', { mix: 0.3, rate: 0.4 })],
+    'Blues Crunch': () => [newFx('gate', { thr: -60 }), newFx('amp', { model: 'Crunch', gain: 0.45, mid: 3, treble: 1 }), newFx('cab', { type: '1x12 Combo', mic: 0.45 }), newFx('reverb', { type: 'Spring', mix: 0.2 })],
+    'Rock Lead': () => [newFx('gate', { thr: -55 }), newFx('amp', { model: 'Lead', gain: 0.65, mid: 2, presence: 3 }), newFx('cab', { type: '4x12 Closed' }), newFx('delay', { time: '1/8.', mix: 0.18, fb: 0.35 }), newFx('reverb', { type: 'Plate', mix: 0.18 })],
+    'Metal': () => [newFx('gate', { thr: -45, rel: 40 }), newFx('eq', { hp: 80 }), newFx('amp', { model: 'Metal', gain: 0.8, bass: 3, mid: -4, treble: 3, presence: 4 }), newFx('cab', { type: '4x12 Closed', mic: 0.55 }), newFx('eq', { hp: 90, lp: 9000 })],
+    'Fuzz Stoner': () => [newFx('gate', { thr: -55 }), newFx('amp', { model: 'Fuzz', gain: 0.7, bass: 4, treble: -2 }), newFx('cab', { type: '4x12 Closed', mic: 0.35, room: 0.3 }), newFx('reverb', { type: 'Room', mix: 0.15 })],
+    'Surf Tremolo': () => [newFx('amp', { model: 'Clean', gain: 0.3, treble: 4, master: 5 }), newFx('cab', { type: '2x12 Open' }), newFx('trem', { rate: '1/8', depth: 0.6 }), newFx('reverb', { type: 'Spring', mix: 0.4 })],
+    'Ambient Wash': () => [newFx('amp', { model: 'Clean', gain: 0.2, master: 12 }), newFx('cab', { type: '2x12 Open', mic: 0.4 }), newFx('chorus', { mix: 0.35 }), newFx('delay', { pp: 'Ping-pong', time: '1/4.', fb: 0.6, mix: 0.4 }), newFx('reverb', { type: 'Cathedral', mix: 0.5 })],
+    'Bass Amp': () => [newFx('comp', { thr: -24, ratio: 4, att: 10, makeup: 4 }), newFx('amp', { model: 'Bass', gain: 0.3, bass: 3, mid: -2 }), newFx('cab', { type: '4x10 Bass', room: 0.05 })],
+    'Acoustic (pickup)': () => [newFx('eq', { hp: 70, m1f: 250, m1g: -4, hg: 3 }), newFx('comp', { thr: -20, ratio: 3, makeup: 3 }), newFx('reverb', { type: 'Room', mix: 0.2 })],
+    'No amp (direct)': () => [],
+  },
+  vocal: {
+    'Pop Vocal Chain': () => [newFx('eq', { hp: 90, m1f: 300, m1g: -2, hg: 3 }), newFx('comp', { thr: -22, ratio: 4, att: 5, makeup: 5 }), newFx('deess', { amount: 0.5 }), newFx('reverb', { type: 'Plate', mix: 0.18 })],
+    'Rap Vocal': () => [newFx('eq', { hp: 100, m2f: 3000, m2g: 3 }), newFx('comp', { thr: -26, ratio: 6, att: 3, makeup: 8 }), newFx('deess', { amount: 0.6 }), newFx('sat', { drive: 0.15, mix: 0.4, out: -1 })],
+    'Radio / Telephone': () => [newFx('eq', { hp: 500, lp: 3500, m1f: 1500, m1g: 6 }), newFx('sat', { drive: 0.5, mix: 1, out: -4 }), newFx('comp', { thr: -20, ratio: 8 })],
+    'Dreamy Vocal': () => [newFx('eq', { hp: 120, hg: 4 }), newFx('comp', { thr: -20, ratio: 3 }), newFx('doubler', { amount: 0.6 }), newFx('delay', { time: '1/4', fb: 0.45, mix: 0.25 }), newFx('reverb', { type: 'Cathedral', mix: 0.4 })],
+    'Podcast / Voice-over': () => [newFx('gate', { thr: -60 }), newFx('eq', { hp: 80, m1f: 250, m1g: -2, hg: 2 }), newFx('comp', { thr: -24, ratio: 4, makeup: 6 }), newFx('deess', {}), newFx('limiter', { gain: 3 })],
+    'Raw (no effects)': () => [],
+  },
+};
+
+const FX_ORDER = ['gate', 'amp', 'cab', 'eq', 'comp', 'sat', 'filter', 'trem', 'chorus', 'phaser', 'doubler', 'deess', 'delay', 'reverb', 'crush', 'width', 'pump', 'limiter'];
 
 function newFx(type, over = {}) {
   const p = {};

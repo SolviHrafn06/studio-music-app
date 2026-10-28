@@ -1,4 +1,4 @@
-STUDIO 2.0 - free music maker with built-in Auto-Tune
+STUDIO 2.1 - free music maker with built-in Auto-Tune
 =====================================================
 
 INSTALL
@@ -10,6 +10,27 @@ INSTALL
   If Windows SmartScreen says "Windows protected your PC", click
   "More info" -> "Run anyway" (it does that for any unsigned app).
   Needs Windows 10 or 11. Allow microphone / MIDI access when asked.
+
+NEW IN 2.1 - INPUTS & GUITAR AMPS
+  - Choose the input for every audio track: built-in mic, USB mic, or any
+    input of an audio interface (Input 1 / Input 2 / mono / stereo), with
+    input gain and a level meter that tells you if you're too quiet or clipping.
+  - Monitor (headphone button): hear yourself live through the track's
+    amp and effects while you play or sing.
+  - Guitar amp simulator: 6 amp models (Clean, Crunch, Lead, Metal, Fuzz,
+    Bass), speaker cabinets (1x12, 2x12, 4x12, 4x10 bass, DI), noise gate,
+    tremolo - plus all the other effects as pedals.
+  - One-click sounds: Clean Sparkle, Funk Clean, Blues Crunch, Rock Lead,
+    Metal, Fuzz Stoner, Surf Tremolo, Ambient Wash, Bass Amp, Acoustic,
+    and vocal chains (Pop, Rap, Radio, Dreamy, Podcast).
+  - Built-in guitar/bass tuner.
+  - Audio settings (gear button): output device, default input, latency.
+  HOW TO PLAY GUITAR INTO STUDIO
+    1. Plug the guitar into a USB audio interface (or a USB guitar cable).
+       A laptop's headphone/mic jack usually won't work well for guitar.
+    2. Click "+ Guitar", pick your interface and the input you plugged into.
+    3. Press "Monitor" (wear headphones), pick a sound, and play.
+    4. Press R to record.
 
 WHAT'S NEW IN 2.0
   PRO SOUNDS

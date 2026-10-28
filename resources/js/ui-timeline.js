@@ -60,6 +60,7 @@ const Headers = {
         btn('s', 'S', 'Solo', tr.solo, () => App.mutate(() => (tr.solo = !tr.solo))),
       ];
       if (tr.type !== 'drums') row2.push(btn('arm', '●', tr.type === 'audio' ? 'Arm for recording' : 'Arm for MIDI recording', tr.armed, () => App.mutate(() => { const v = !tr.armed; P.tracks.forEach((t) => (t.armed = false)); tr.armed = v; })));
+      if (tr.type === 'audio') row2.push(btn('mon', '🎧', 'Monitor: hear this track’s input live (Input & Amp tab)', Engine.monitors.has(tr.id), () => InputPanel.toggleMonitor(tr)));
       if (tr.type === 'audio') row2.push(btn('at', 'AT', 'Auto-Tune on/off', tr.autotune.on, () => App.mutate(() => (tr.autotune.on = !tr.autotune.on))));
       row2.push(btn('aut' + (tr.auto.some((l) => l.pts.length) ? ' has' : ''), 'A', 'Show automation lane', tr.autoShow, () => App.mutate(() => (tr.autoShow = !tr.autoShow))));
       if (tr.type === 'synth') row2.push(options(h('select', { title: 'Instrument', onmousedown: (e) => e.stopPropagation(), onchange: (e) => setInstrument(tr, e.target.value) }), instrumentOptions(), tr.inst.name));
@@ -92,7 +93,8 @@ const Headers = {
     el.append(h('div', { class: 'add-row' },
       h('button', { onclick: () => addTrack('drums') }, '+ Drums'),
       h('button', { onclick: () => addTrack('synth') }, '+ Instrument'),
-      h('button', { onclick: () => addTrack('audio') }, '+ Vocal')));
+      h('button', { onclick: () => addTrack('audio') }, '+ Vocal'),
+      h('button', { onclick: () => addGuitarTrack() }, '+ Guitar')));
   },
   menu(tr, e) {
     const P = App.project;

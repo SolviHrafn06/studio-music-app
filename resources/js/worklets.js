@@ -366,6 +366,36 @@ class CrusherProcessor extends AudioWorkletProcessor {
   }
 }
 
+class GateProcessor extends AudioWorkletProcessor {
+  static get parameterDescriptors() {
+    return [
+      { name: 'thr', defaultValue: -55, minValue: -100, maxValue: 0, automationRate: 'k-rate' },
+      { name: 'rel', defaultValue: 80, minValue: 5, maxValue: 1000, automationRate: 'k-rate' },
+    ];
+  }
+  constructor() { super(); this.env = 0; this.g = 0; this.hold = 0; }
+  process(inputs, outputs, params) {
+    const inp = inputs[0], out = outputs[0];
+    if (!inp || !inp.length) { for (const o of out) o.fill(0); return true; }
+    const thr = Math.pow(10, params.thr[0] / 20), close = thr * 0.5;
+    const relA = 1 - Math.exp(-1 / ((params.rel[0] / 1000) * sampleRate)), attA = 1 - Math.exp(-1 / (0.0008 * sampleRate));
+    const envA = 1 - Math.exp(-1 / (0.002 * sampleRate)), envR = 1 - Math.exp(-1 / (0.03 * sampleRate));
+    const holdN = Math.round(0.03 * sampleRate);
+    for (let i = 0; i < out[0].length; i++) {
+      let a = 0;
+      for (let c = 0; c < inp.length; c++) a = Math.max(a, Math.abs(inp[c][i]));
+      this.env += (a - this.env) * (a > this.env ? envA : envR);
+      if (this.env > thr) this.hold = holdN;
+      else if (this.hold > 0) this.hold--;
+      const target = this.env > thr || (this.hold > 0 && this.env > close) ? 1 : 0;
+      this.g += (target - this.g) * (target > this.g ? attA : relA);
+      for (let c = 0; c < out.length; c++) out[c][i] = inp[Math.min(c, inp.length - 1)][i] * this.g;
+    }
+    return true;
+  }
+}
+
+registerProcessor('gate', GateProcessor);
 registerProcessor('autotune', AutoTuneProcessor);
 registerProcessor('recorder', RecorderProcessor);
 registerProcessor('crusher', CrusherProcessor);

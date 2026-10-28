@@ -140,7 +140,7 @@ const FxPanel = {
       requestAnimationFrame(() => this.drawEq(t, f, cv));
       this.eqDrag(t, f, cv, after);
     }
-    if (def.params.some((p) => p.id === 'thr' || p.id === 'ceil') || f.type === 'deess') {
+    if (['comp', 'limiter', 'deess'].includes(f.type)) {
       const gr = h('div', { class: 'gr' }, h('span', {}, 'Gain reduction'), h('div', { class: 'gr-bar' }, h('div', { class: 'gr-fill' })), h('span', { class: 'gr-val' }, '0 dB'));
       card.append(gr);
       this.grs.push({ el: gr, t, id: f.id });
@@ -240,7 +240,7 @@ const FxPanel = {
     }, { passive: false });
   },
   drawMeters() {
-    if (App.tab !== 'fx') return;
+    if (App.tab !== 'fx' && App.tab !== 'input') return;
     for (const g of this.grs) {
       const lf = this.liveFx(g.t, g.id);
       const red = lf && lf.inst.reduction ? -lf.inst.reduction() : 0;

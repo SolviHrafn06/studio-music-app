@@ -157,7 +157,7 @@ function makeTrack(type, P) {
   });
   if (type === 'synth') Object.assign(t, { name: 'Instrument', inst: presetInst('Grand Piano'), arp: { on: false, mode: 'up', rate: 1, oct: 1, gate: 0.8 } });
   if (type === 'audio') Object.assign(t, {
-    name: 'Vocals', rev: 0.18,
+    name: 'Vocals', rev: 0.18, input: { device: (typeof Devices !== 'undefined' ? Devices.defaultInput() : 'default'), ch: 'mono' }, inGain: 0,
     autotune: { on: true, follow: true, key: P.key, scale: P.scale, speed: 0.05, amount: 1, robot: 0, harmony: false, formant: 0, shift: 0, harm: DEFAULT_HARM(), preset: null },
   });
   return t;
@@ -187,6 +187,8 @@ function normalizeProject(P) {
       const a = t.autotune;
       a.robot = a.robot || 0; a.formant = a.formant || 0; a.shift = a.shift || 0;
       a.harm = a.harm || DEFAULT_HARM();
+      t.input = t.input || { device: 'default', ch: 'mono' };
+      t.inGain = t.inGain || 0;
       for (const c of t.clips) {
         c.takes = c.takes || [c.buf];
         c.srcBpm = c.srcBpm || P.bpm;
@@ -553,6 +555,7 @@ const MIDI = {
     if (!navigator.requestMIDIAccess) return;
     try {
       const acc = await navigator.requestMIDIAccess();
+      this.acc = acc;
       const hook = () => {
         let n = 0;
         acc.inputs.forEach((inp) => { inp.onmidimessage = (e) => this.msg(e.data); n++; });

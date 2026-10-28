@@ -17,6 +17,7 @@ const Panels = {
     else if (t === 'fx') FxPanel.render();
     else if (t === 'vocal') Vocal.render();
     else if (t === 'browser') Browser.render();
+    else if (t === 'input') InputPanel.render();
   },
 };
 

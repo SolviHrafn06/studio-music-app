@@ -90,6 +90,7 @@ function frame() {
     Mixer.drawMeters();
     FxPanel.drawMeters();
     AT.drawGraph();
+    InputPanel.draw();
     const pk = peakOf(Engine.bus.analyser);
     masterPeak = Math.max(pk, masterPeak * 0.92);
     const cv = $('#master-meter'), g = cv.getContext('2d');
@@ -125,6 +126,7 @@ function wireTopBar() {
     { label: 'Export stems (one WAV per track)', action: () => exportSong('stems') },
   ]);
   $('#btn-import').onclick = () => importAudio();
+  $('#btn-settings').onclick = () => AudioSettings.open();
   $('#btn-new').onclick = () => { if (!App.dirty || confirm('Start a new empty project? Unsaved changes will be lost.')) { Buffers.clear(); App.load(emptyProject()); } };
   $('#song-name').onchange = (e) => App.mutate(() => (App.project.name = e.target.value || 'My Song'), false);
   $('#bpm').onchange = (e) => {
@@ -207,6 +209,7 @@ async function boot() {
     if (!opened && mode === 'open') { App.load(emptyProject()); await openProject(); opened = true; }
     if (!opened) { App.load(mode === 'empty' ? emptyProject() : demoProject()); toast(mode === 'empty' ? 'New project ready.' : 'Loaded a demo song — press Space to play it!', 4000); }
     Autosave.prune();
+    AudioSettings.restore();
     MIDI.init();
     setInterval(() => App.dirty && Autosave.save(), 60000);
   };
