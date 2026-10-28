@@ -10,31 +10,38 @@
   <div id="splash">
     <div class="splash-card">
       <div class="logo-big"><span class="dot"></span>Studio</div>
-      <p>Beats, synths, vocals &amp; built-in Auto-Tune. Free, no plugins needed.</p>
-      <button id="start-btn" class="primary">Start making music</button>
+      <p>Beats, real instruments, synths, vocals &amp; built-in Auto-Tune.<br>Free — no plugins needed.</p>
+      <div class="splash-btns">
+        <button id="start-btn" class="primary">▶ Start with a demo song</button>
+        <button id="empty-btn">New empty project</button>
+        <button id="open-btn">Open project…</button>
+        <button id="recover-btn" class="recover" style="display:none"></button>
+      </div>
       <div class="tips">
         <div><kbd>Space</kbd> play / stop</div>
-        <div><kbd>R</kbd> record</div>
+        <div><kbd>R</kbd> record (audio or MIDI)</div>
         <div><kbd>A</kbd>–<kbd>K</kbd> play the selected instrument</div>
+        <div><kbd>Ctrl</kbd>+<kbd>T</kbd> split · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate</div>
+        <div><kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy &amp; paste</div>
         <div><kbd>Ctrl</kbd>+<kbd>S</kbd> save · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo</div>
       </div>
     </div>
   </div>
 
   <header id="topbar">
-    <div class="brand"><span class="dot"></span>Studio</div>
+    <div class="brand"><span class="dot"></span><input id="song-name" type="text" spellcheck="false" title="Song name"></div>
     <div class="group">
       <button id="btn-new" title="New project">New</button>
-      <button id="btn-open" title="Open project">Open</button>
+      <button id="btn-open" title="Open project (Ctrl+O)">Open</button>
       <button id="btn-save" title="Save project (Ctrl+S)">Save</button>
-      <button id="btn-export" class="outline" title="Export song as WAV">Export WAV</button>
+      <button id="btn-export" class="outline" title="Export WAV, MP3 or stems">Export ▾</button>
     </div>
     <div class="group transport">
       <button id="btn-home" title="Go to start (Home)">⏮</button>
       <button id="btn-play" class="play" title="Play / Stop (Space)">▶</button>
       <button id="btn-stop" title="Stop">■</button>
-      <button id="btn-rec" class="rec" title="Record on armed audio track (R)">●</button>
-      <button id="btn-loop" class="toggle" title="Loop the highlighted region (L)">⟳</button>
+      <button id="btn-rec" class="rec" title="Record on the armed track (R) — audio or MIDI">●</button>
+      <button id="btn-loop" class="toggle" title="Loop the highlighted region (L / Ctrl+L)">⟳</button>
       <button id="btn-metro" class="toggle" title="Metronome (M)">♩</button>
     </div>
     <div class="lcd"><div id="time-bars">1.1.1</div><div id="time-secs">0:00.0</div></div>
@@ -42,6 +49,9 @@
     <label class="field">Key <select id="key"></select></label>
     <label class="field"><select id="scale"></select></label>
     <div class="spacer"></div>
+    <span id="save-state" class="hint2"></span>
+    <button id="btn-typing" class="toggle on" title="Musical typing: play notes with A–K keys">Keys</button>
+    <span id="midi-led" title="No MIDI keyboard connected">MIDI</span>
     <div class="group">
       <button id="btn-undo" title="Undo (Ctrl+Z)">↶</button>
       <button id="btn-redo" title="Redo (Ctrl+Y)">↷</button>
@@ -52,17 +62,17 @@
   <section id="arrange">
     <div id="arr-toolbar">
       <span class="label">Add track</span>
-      <button data-add="drums">+ Drums</button>
-      <button data-add="synth">+ Instrument</button>
-      <button data-add="audio">+ Vocal / Audio</button>
-      <button id="btn-import">Import audio file…</button>
+      <button data-add="drums" onclick="addTrack('drums')">+ Drums</button>
+      <button data-add="synth" onclick="addTrack('synth')">+ Instrument</button>
+      <button data-add="audio" onclick="addTrack('audio')">+ Vocal / Audio</button>
+      <button id="btn-import">Import audio…</button>
       <span class="spacer"></span>
-      <span id="hint">Click an empty lane to add a clip · drag to move · drag edge to resize · double-click to edit · right-click to delete</span>
+      <span id="hint">Click lane = new clip · drag empty = select · edges = trim · top corners = fades · right-click = menu · drop audio files here</span>
       <label class="field">Snap
         <select id="snap"><option value="4">Bar</option><option value="1" selected>Beat</option><option value="0.25">1/16</option></select>
       </label>
-      <button id="zoom-out" title="Zoom out">−</button>
-      <button id="zoom-in" title="Zoom in">+</button>
+      <button id="zoom-out" title="Zoom out (-)">−</button>
+      <button id="zoom-in" title="Zoom in (+)">+</button>
     </div>
     <div id="arr-scroll">
       <div id="arr-grid">
@@ -75,16 +85,23 @@
   </section>
 
   <section id="bottom">
+    <div id="resizer" title="Drag to resize"></div>
     <nav id="tabs">
-      <button data-tab="rack" class="active">Channel Rack</button>
+      <button data-tab="browser" class="active">Browser</button>
+      <button data-tab="rack">Channel Rack</button>
       <button data-tab="piano">Piano Roll</button>
+      <button data-tab="inst">Instrument</button>
       <button data-tab="mixer">Mixer</button>
-      <button data-tab="autotune" class="at-tab">Auto-Tune</button>
+      <button data-tab="fx">Effects</button>
+      <button data-tab="vocal" class="at-tab">Vocal Studio</button>
     </nav>
-    <div id="panel-rack" class="panel active"></div>
+    <div id="panel-browser" class="panel active"></div>
+    <div id="panel-rack" class="panel"></div>
     <div id="panel-piano" class="panel"></div>
+    <div id="panel-inst" class="panel"></div>
     <div id="panel-mixer" class="panel"></div>
-    <div id="panel-autotune" class="panel"></div>
+    <div id="panel-fx" class="panel"></div>
+    <div id="panel-vocal" class="panel"></div>
   </section>
 
   <input type="file" id="file-audio" accept="audio/*,.wav,.mp3,.ogg,.flac,.m4a" hidden multiple>
@@ -93,8 +110,19 @@
   <div id="toast"></div>
 
   <script src="js/neutralino.js"></script>
+  <script src="js/lame.min.js"></script>
+  <script src="js/instruments.js"></script>
   <script src="js/sounds.js"></script>
+  <script src="js/synth.js"></script>
+  <script src="js/fx.js"></script>
+  <script src="js/loops.js"></script>
   <script src="js/engine.js"></script>
-  <script src="js/app.js"></script>
+  <script src="js/ui-core.js"></script>
+  <script src="js/ui-timeline.js"></script>
+  <script src="js/ui-editors.js"></script>
+  <script src="js/ui-mix.js"></script>
+  <script src="js/ui-vocal.js"></script>
+  <script src="js/ui-browser.js"></script>
+  <script src="js/main.js"></script>
 </body>
 </html>

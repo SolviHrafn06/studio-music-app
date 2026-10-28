@@ -1,4 +1,7 @@
-// Audio engine: mixer graph, transport/scheduler, recording, offline export.
+// Audio engine: mixer graph with effect chains, transport/scheduler, automation, recording,
+// tempo-stretching, offline export.
+
+const AT_LAT = 0.025; // Auto-Tune processing latency (must match worklets.js)
 
 const Buffers = {
   map: new Map(),
@@ -10,30 +13,58 @@ const Buffers = {
     return id;
   },
   get(id) { return this.map.get(id); },
-  clear() { this.map.clear(); this.peaks.clear(); },
+  clear() { this.map.clear(); this.peaks.clear(); Engine.stretchCache.clear(); },
 };
+
+const Worker1 = {
+  w: null, n: 0, pending: new Map(),
+  call(msg, transfer) {
+    if (!this.w) {
+      this.w = new Worker('js/analysis-worker.js');
+      this.w.onmessage = (e) => { const p = this.pending.get(e.data.id); if (p) { this.pending.delete(e.data.id); p(e.data); } };
+    }
+    const id = ++this.n;
+    return new Promise((res) => { this.pending.set(id, res); this.w.postMessage({ ...msg, id }, transfer || []); });
+  },
+};
+
+function laneValue(lane, beat) {
+  const p = lane.pts;
+  if (!p.length) return 0.5;
+  if (beat <= p[0].b) return p[0].v;
+  for (let i = 1; i < p.length; i++) {
+    if (beat <= p[i].b) {
+      const a = p[i - 1], b = p[i];
+      return a.v + ((b.v - a.v) * (beat - a.b)) / Math.max(1e-6, b.b - a.b);
+    }
+  }
+  return p[p.length - 1].v;
+}
 
 const Engine = {
   ctx: null,
   nodes: new Map(),
   sources: new Set(),
+  stretchCache: new Map(),
   playing: false,
   recording: false,
   metronome: false,
   anchors: [],
+  env: { bpm: 120 },
 
   async init() {
     this.ctx = new AudioContext({ latencyHint: 'interactive' });
     await this.ctx.audioWorklet.addModule('js/worklets.js');
-    this.bus = this.buildMaster(this.ctx, this.ctx.destination);
+    this.bus = this.buildMaster(this.ctx, this.ctx.destination, this.env);
     this.silent = this.ctx.createGain();
     this.silent.gain.value = 0;
     this.silent.connect(this.ctx.destination);
     this.previewBus = this.ctx.createGain();
+    this.previewBus.gain.value = 0.9;
     this.previewBus.connect(this.bus.input);
   },
 
-  buildMaster(ctx, dest) {
+  buildMaster(ctx, dest, env) {
     const input = ctx.createGain();
     const reverb = ctx.createConvolver();
     reverb.buffer = makeImpulse(ctx);
@@ -50,77 +81,137 @@ const Engine = {
     dly.connect(lp);
     lp.connect(fb).connect(dly);
     lp.connect(input);
+    const fxIn = ctx.createGain(), fxOut = ctx.createGain();
+    input.connect(fxIn);
     const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -8;
-    comp.knee.value = 6;
-    comp.ratio.value = 4;
-    comp.attack.value = 0.004;
-    comp.release.value = 0.15;
+    comp.threshold.value = -3;
+    comp.knee.value = 3;
+    comp.ratio.value = 12;
+    comp.attack.value = 0.002;
+    comp.release.value = 0.12;
     const vol = ctx.createGain();
     vol.gain.value = 0.9;
     const analyser = ctx.createAnalyser();
-    analyser.fftSize = 1024;
-    input.connect(comp).connect(vol).connect(analyser).connect(dest);
-    return { input, revIn, dlyIn, dly, vol, analyser };
+    analyser.fftSize = 2048;
+    fxOut.connect(comp).connect(vol).connect(analyser).connect(dest);
+    const m = { input, revIn, dlyIn, dly, vol, analyser, fxIn, fxOut, fx: [], fxKey: null };
+    this.buildFx(ctx, m, [], env);
+    return m;
   },
 
-  createTrackChain(ctx, tr, bus) {
+  createTrackChain(ctx, tr, bus, env) {
     const n = {};
     n.input = ctx.createGain();
     let head = n.input;
     if (tr.type === 'audio') {
       const a = tr.autotune;
-      n.at = new AudioWorkletNode(ctx, 'autotune', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { mask: scaleMask(a.key, a.scale) } });
+      n.at = new AudioWorkletNode(ctx, 'autotune', {
+        numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+        processorOptions: { mask: scaleMask(a.key, a.scale), harm: a.harm && a.harm.on ? a.harm.voices : [] },
+      });
       n.maskKey = scaleMask(a.key, a.scale).join();
+      n.harmKey = JSON.stringify(a.harm && a.harm.on ? a.harm.voices : []);
       head.connect(n.at);
       head = n.at;
     }
+    n.fxIn = ctx.createGain();
+    n.fxOut = ctx.createGain();
+    head.connect(n.fxIn);
     n.low = filter(ctx, 'lowshelf', 220);
     n.mid = filter(ctx, 'peaking', 1200, 0.8);
     n.high = filter(ctx, 'highshelf', 5500);
     n.vol = ctx.createGain();
+    n.autoVol = ctx.createGain();
     n.pan = ctx.createStereoPanner();
     n.rev = ctx.createGain();
     n.dly = ctx.createGain();
     n.meter = ctx.createAnalyser();
     n.meter.fftSize = 512;
-    head.connect(n.low).connect(n.mid).connect(n.high).connect(n.vol).connect(n.pan).connect(bus.input);
+    n.fxOut.connect(n.low).connect(n.mid).connect(n.high).connect(n.vol).connect(n.autoVol).connect(n.pan).connect(bus.input);
     n.pan.connect(n.rev).connect(bus.revIn);
     n.pan.connect(n.dly).connect(bus.dlyIn);
     n.pan.connect(n.meter);
+    n.fx = [];
+    n.fxKey = null;
+    this.buildFx(ctx, n, tr.fx || [], env);
     return n;
   },
 
-  applyTrack(n, tr, anySolo, offline) {
-    const set = (p, v) => {
-      if (offline || !this.ctx) p.value = v;
-      else p.setTargetAtTime(v, this.ctx.currentTime, 0.015);
-    };
+  fxKeyOf(list) { return list.map((f) => f.id + f.type + (f.on ? 1 : 0)).join('|'); },
+  buildFx(ctx, n, list, env) {
+    try { n.fxIn.disconnect(); } catch (e) {}
+    for (const f of n.fx) {
+      try { f.inst.output.disconnect(); } catch (e) {}
+      (f.inst.osc || []).forEach((o) => { try { o.stop(); } catch (e) {} });
+    }
+    n.fx = list.filter((f) => f.on).map((f) => {
+      const inst = FX[f.type].create(ctx, f.p, env);
+      inst.set(f.p, false);
+      return { id: f.id, type: f.type, on: true, inst };
+    });
+    let head = n.fxIn;
+    for (const f of n.fx) { head.connect(f.inst.input); head = f.inst.output; }
+    head.connect(n.fxOut);
+    n.fxKey = this.fxKeyOf(list);
+  },
+
+  autoTarget(tr, n, target) {
+    if (target === 'vol') return { param: n.autoVol.gain, map: (v) => v * 1.25 };
+    if (target === 'pan') return { param: n.pan.pan, map: (v) => v * 2 - 1 };
+    const m = /^fx:([^:]+):(.+)$/.exec(target);
+    if (!m) return null;
+    const f = n.fx.find((x) => x.id === m[1]);
+    const def = (tr.fx || []).find((x) => x.id === m[1]);
+    if (!f || !def || !f.inst.ap || !f.inst.ap[m[2]]) return null;
+    const sp = FX[def.type].params.find((p) => p.id === m[2]);
+    if (sp.unit === '%' && m[2] === 'mix' && def.type === 'doubler') return { param: f.inst.ap[m[2]], map: (v) => v * 0.7 };
+    return { param: f.inst.ap[m[2]], map: (v) => fromNorm(sp, v) };
+  },
+  activeLane(tr, target) { return (tr.auto || []).find((l) => l.target === target && l.pts.length); },
+
+  applyTrack(n, tr, anySolo, P, live) {
+    const set = (p, v) => setP(p, v, live);
     const audible = !tr.mute && (!anySolo || tr.solo);
-    set(n.vol.gain, audible ? tr.volume : 0);
-    set(n.pan.pan, tr.pan);
+    const volLane = this.activeLane(tr, 'vol'), panLane = this.activeLane(tr, 'pan');
+    set(n.vol.gain, audible ? (volLane ? 1 : tr.volume) : 0);
+    if (!panLane) set(n.pan.pan, tr.pan);
     set(n.rev.gain, tr.rev);
     set(n.dly.gain, tr.dly);
     set(n.low.gain, tr.eq.low);
     set(n.mid.gain, tr.eq.mid);
     set(n.high.gain, tr.eq.high);
-    if (n.at && tr.autotune) {
-      const a = tr.autotune;
-      n.at.parameters.get('bypass').value = a.on ? 0 : 1;
-      n.at.parameters.get('speed').value = a.speed;
-      n.at.parameters.get('amount').value = a.amount;
-      n.at.parameters.get('robot').value = a.robot || 0;
-      n.at.parameters.get('harmony').value = a.harmony ? 1 : 0;
-      const mask = scaleMask(a.key, a.scale).join();
-      if (n.maskKey !== mask) {
-        n.maskKey = mask;
-        n.at.port.postMessage({ mask: scaleMask(a.key, a.scale) });
+    const fxList = tr.fx || [];
+    if (n.fxKey !== this.fxKeyOf(fxList)) this.buildFx(n.input.context, n, fxList, live ? this.env : n.env || this.env);
+    for (const f of n.fx) { const d = fxList.find((x) => x.id === f.id); if (d) f.inst.set(d.p, live); }
+    if (!this.playing || !live) {
+      const beat = live ? App.playhead : 0;
+      for (const lane of tr.auto || []) {
+        if (!lane.pts.length) continue;
+        const t = this.autoTarget(tr, n, lane.target);
+        if (t) { t.param.cancelScheduledValues(0); t.param.value = t.map(laneValue(lane, beat)); }
       }
+      if (!volLane) n.autoVol.gain.value = 1;
+    }
+    if (n.at && tr.autotune) {
+      const a = tr.autotune, pa = (k) => n.at.parameters.get(k);
+      pa('bypass').value = a.on ? 0 : 1;
+      pa('speed').value = a.speed;
+      pa('amount').value = a.amount;
+      pa('robot').value = a.robot || 0;
+      pa('harmony').value = a.harmony ? 1 : 0;
+      pa('formant').value = a.formant || 0;
+      pa('shift').value = a.shift || 0;
+      pa('harmMix').value = a.harm ? a.harm.mix ?? 0.6 : 0.6;
+      const mask = scaleMask(a.key, a.scale).join();
+      if (n.maskKey !== mask) { n.maskKey = mask; n.at.port.postMessage({ mask: scaleMask(a.key, a.scale) }); }
+      const hk = JSON.stringify(a.harm && a.harm.on ? a.harm.voices : []);
+      if (n.harmKey !== hk) { n.harmKey = hk; n.at.port.postMessage({ harm: a.harm && a.harm.on ? a.harm.voices : [] }); }
     }
   },
 
   sync(P) {
     if (!this.ctx) return;
+    this.env.bpm = P.bpm;
     const ids = new Set(P.tracks.map((t) => t.id));
     for (const [id, n] of this.nodes) {
       if (!ids.has(id)) {
@@ -131,21 +222,69 @@ const Engine = {
     const anySolo = P.tracks.some((t) => t.solo);
     for (const tr of P.tracks) {
       let n = this.nodes.get(tr.id);
-      if (!n) {
-        n = this.createTrackChain(this.ctx, tr, this.bus);
-        this.nodes.set(tr.id, n);
-      }
-      this.applyTrack(n, tr, anySolo, false);
+      if (!n) { n = this.createTrackChain(this.ctx, tr, this.bus, this.env); this.nodes.set(tr.id, n); }
+      this.applyTrack(n, tr, anySolo, P, true);
     }
+    const m = this.bus, mfx = P.master.fx;
+    if (m.fxKey !== this.fxKeyOf(mfx)) this.buildFx(this.ctx, m, mfx, this.env);
+    for (const f of m.fx) { const d = mfx.find((x) => x.id === f.id); if (d) f.inst.set(d.p, true); }
+    setP(m.vol.gain, P.master.volume, true);
     this.bus.dly.delayTime.setTargetAtTime((60 / P.bpm) * 0.75, this.ctx.currentTime, 0.05);
+  },
+
+  ensureInstruments(P) {
+    const names = new Set();
+    for (const t of P.tracks) if (t.type === 'synth' && t.inst.kind === 'sampler') names.add(t.inst.name);
+    return Promise.all([...names].map((nm) => Sampler.load(nm, this.ctx)));
+  },
+
+  // audio clip buffer, following the song tempo when "stretch" is on
+  clipBuffer(c, P) {
+    const buf = Buffers.get(c.buf);
+    if (!buf || !c.stretch || !c.srcBpm || Math.abs(c.srcBpm - P.bpm) < 0.01) return { buf, ratio: 1 };
+    const ratio = c.srcBpm / P.bpm;
+    const key = c.buf + '@' + ratio.toFixed(4);
+    const hit = this.stretchCache.get(key);
+    if (hit && hit.buf) return { buf: hit.buf, ratio };
+    if (!hit) {
+      const entry = {};
+      this.stretchCache.set(key, entry);
+      const chans = [];
+      for (let ch = 0; ch < buf.numberOfChannels; ch++) chans.push(buf.getChannelData(ch).slice());
+      entry.promise = Worker1.call({ cmd: 'stretch', chans, sr: buf.sampleRate, ratio }, chans.map((x) => x.buffer)).then((r) => {
+        const nb = new AudioBuffer({ numberOfChannels: r.chans.length, length: r.chans[0].length, sampleRate: buf.sampleRate });
+        r.chans.forEach((d, i) => nb.copyToChannel(d, i));
+        entry.buf = nb;
+        Buffers.peaks.set(key, computePeaks(nb));
+        if (typeof TL !== 'undefined') TL.draw();
+        return nb;
+      });
+    }
+    return { buf, ratio: 1, pending: hit ? hit.promise : this.stretchCache.get(key).promise };
+  },
+  async ensureStretched(P) {
+    const ps = [];
+    for (const t of P.tracks) if (t.type === 'audio') for (const c of t.clips) { const r = this.clipBuffer(c, P); if (r.pending) ps.push(r.pending); }
+    await Promise.all(ps);
   },
 
   // Schedules everything that happens on one 16th-note step. Shared by live playback and export.
   scheduleStep(ctx, P, step, time, jump, nodes, reg) {
-    const spStep = 60 / P.bpm / 4;
+    const spStep = 60 / P.bpm / 4, spBeat = spStep * 4;
     for (const tr of P.tracks) {
       const n = nodes.get(tr.id);
       if (!n) continue;
+      for (const f of n.fx) if (f.inst.schedule) f.inst.schedule(step, time, spStep);
+      if (tr.auto && tr.auto.length) {
+        for (const lane of tr.auto) {
+          if (!lane.pts.length) continue;
+          const t = this.autoTarget(tr, n, lane.target);
+          if (!t) continue;
+          const v0 = t.map(laneValue(lane, step / 4)), v1 = t.map(laneValue(lane, (step + 1) / 4));
+          if (jump) { t.param.cancelScheduledValues(time); t.param.setValueAtTime(v0, time); }
+          t.param.linearRampToValueAtTime(v1, time + spStep);
+        }
+      }
       for (const c of tr.clips) {
         const s0 = Math.round(c.start * 4), s1 = Math.round((c.start + c.length) * 4);
         if (step < s0 || step >= s1) continue;
@@ -153,33 +292,80 @@ const Engine = {
         if (tr.type === 'drums') {
           const pat = tr.patterns[c.pattern];
           if (!pat) continue;
-          const ps = rel % pat.len;
+          const ps = (rel + (c.off || 0)) % pat.len;
           for (const ch of tr.channels) {
             const v = pat.steps[ch.id] && pat.steps[ch.id][ps];
-            if (v && !ch.mute) playDrum(ctx, n.input, ch.kind, time, v * ch.vol, ch.sample ? Buffers.get(ch.sample) : null, reg);
-          }
-        } else if (tr.type === 'synth') {
-          for (const nt of c.notes) {
-            if (nt.s === rel) playNote(ctx, n.input, tr.instrument, nt.p, time, nt.d * spStep, nt.v ?? 0.8, reg);
-          }
-        } else if (tr.type === 'audio') {
-          const buf = Buffers.get(c.buf);
-          if (!buf) continue;
-          if (rel === 0 || jump) {
-            const off = (c.offset || 0) + rel * spStep;
-            const dur = (s1 - step) * spStep;
-            if (off < buf.duration) {
-              const src = ctx.createBufferSource();
-              src.buffer = buf;
-              const g = ctx.createGain();
-              g.gain.value = c.gain ?? 1;
-              src.connect(g).connect(n.input);
-              src.start(time, off, Math.min(dur, buf.duration - off));
-              reg(src);
+            if (!v || ch.mute) continue;
+            const hits = v >= 2 ? Math.round(v) : 1, vel = v >= 2 ? 0.85 : v;
+            const sw = ps % 2 === 1 ? (tr.swing || 0) * spStep * 0.66 : 0;
+            for (let h = 0; h < hits; h++) {
+              playDrum(ctx, n.input, ch.kind, time + sw + (h * spStep) / hits, vel * ch.vol * (h ? 0.85 : 1), ch.sample ? Buffers.get(ch.sample) : null, reg, tr.kit || 'Classic', ch.pitch || 0);
             }
           }
+        } else if (tr.type === 'synth') {
+          const clipSteps = s1 - s0;
+          if (tr.arp && tr.arp.on) this.arpStep(ctx, tr, c, n, rel, s0, clipSteps, time, spStep, reg);
+          else {
+            for (const nt of c.notes) {
+              if (Math.floor(nt.s + 1e-6) !== rel || nt.s >= clipSteps) continue;
+              playInstrument(ctx, n.input, tr.inst, nt.p, time + (nt.s - rel) * spStep, nt.d * spStep, nt.v ?? 0.8, reg);
+            }
+          }
+        } else if (tr.type === 'audio') {
+          if (!(rel === 0 || jump)) continue;
+          const { buf, ratio } = this.clipBuffer(c, P);
+          if (!buf) continue;
+          let off = (c.offset || 0) * ratio + rel * spStep;
+          const clipDur = (s1 - s0) * spStep;
+          let tc = rel * spStep;
+          let startT = time - (tr.autotune && tr.autotune.on ? AT_LAT : 0);
+          if (startT < ctx.currentTime) { const d = ctx.currentTime - startT; off += d; tc += d; startT = ctx.currentTime; }
+          const dur = clipDur - tc;
+          if (off >= buf.duration || dur <= 0) continue;
+          const src = ctx.createBufferSource();
+          src.buffer = buf;
+          const g = ctx.createGain();
+          const base = c.gain ?? 1;
+          const fi = (c.fadeIn || 0) * spBeat, fo = (c.fadeOut || 0) * spBeat;
+          const env = (x) => base * (fi > 0 ? Math.min(1, x / fi) : 1) * (fo > 0 ? Math.min(1, Math.max(0, (clipDur - x) / fo)) : 1);
+          g.gain.setValueAtTime(env(tc), startT);
+          if (fi > 0 && tc < fi) g.gain.linearRampToValueAtTime(env(fi), startT + (fi - tc));
+          if (fo > 0) {
+            const foStart = Math.max(tc, clipDur - fo);
+            g.gain.setValueAtTime(env(foStart), startT + (foStart - tc));
+            g.gain.linearRampToValueAtTime(0, startT + (clipDur - tc));
+          }
+          src.connect(g).connect(n.input);
+          src.start(startT, off, Math.min(dur, buf.duration - off));
+          reg(src);
         }
       }
+    }
+  },
+
+  arpStep(ctx, tr, c, n, rel, s0, clipSteps, time, spStep, reg) {
+    const a = tr.arp, rate = a.rate || 1;
+    const subs = rate < 1 ? Math.round(1 / rate) : 1;
+    for (let k = 0; k < subs; k++) {
+      const pos = rel + k * rate;
+      const gidx = Math.round((s0 + pos) / rate);
+      if (rate > 1 && Math.abs(pos / rate - Math.round(pos / rate)) > 1e-6) continue;
+      const held = c.notes.filter((nt) => nt.s <= pos + 1e-6 && nt.s + nt.d > pos + 1e-6 && nt.s < clipSteps).map((nt) => nt.p).sort((x, y) => x - y);
+      if (!held.length) continue;
+      const seq = [];
+      for (let o = 0; o < (a.oct || 1); o++) held.forEach((p) => seq.push(p + 12 * o));
+      let notes;
+      if (a.mode === 'chord') notes = held;
+      else {
+        let idx;
+        const L = seq.length;
+        if (a.mode === 'down') idx = L - 1 - (gidx % L);
+        else if (a.mode === 'updown') { const per = Math.max(1, 2 * L - 2); const q = gidx % per; idx = q < L ? q : per - q; }
+        else if (a.mode === 'random') idx = Math.abs(Math.sin(gidx * 12.9898) * 43758.5453) % 1 * L | 0;
+        else idx = gidx % L;
+        notes = [seq[idx]];
+      }
+      for (const p of notes) playInstrument(ctx, n.input, tr.inst, p, time + k * rate * spStep, rate * spStep * (a.gate || 0.8), 0.8, reg);
     }
   },
 
@@ -198,6 +384,7 @@ const Engine = {
     if (this.playing) this.stop(true);
     const ctx = this.ctx;
     if (ctx.state !== 'running') ctx.resume();
+    this.ensureStretched(App.project);
     this.playing = true;
     this.step = Math.floor(fromBeat * 4 + 1e-6);
     this.nextTime = ctx.currentTime + 0.08;
@@ -218,7 +405,7 @@ const Engine = {
         this.step = Math.round(L.start * 4);
         this.anchors.push({ time: this.nextTime, step: this.step });
         this.jump = true;
-      } else if (!L.on && !this.recording && this.endStep > 0 && this.step >= this.endStep) {
+      } else if (!L.on && !this.recording && !App.midiRec && this.endStep > 0 && this.step >= this.endStep) {
         const when = (this.nextTime - ctx.currentTime) * 1000;
         clearInterval(this.timer);
         this.timer = null;
@@ -226,14 +413,13 @@ const Engine = {
         return;
       }
       this.scheduleStep(ctx, P, this.step, this.nextTime, this.jump, this.nodes, this.reg);
-      if (this.metronome && this.step % 4 === 0) playClick(ctx, this.bus.input, this.nextTime, this.step % 16 === 0);
+      if ((this.metronome || (this.recording && App.countClick)) && this.step % 4 === 0) playClick(ctx, this.bus.input, this.nextTime, this.step % 16 === 0);
       this.jump = false;
       this.step++;
       this.nextTime += spStep;
     }
   },
 
-  // Current playhead position in beats
   beat() {
     if (!this.playing) return null;
     const now = this.ctx.currentTime;
@@ -243,12 +429,15 @@ const Engine = {
     return Math.max(a.step, a.step + (now - a.time) / spStep) / 4;
   },
 
-  stop(keepTimer) {
+  stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     for (const s of this.sources) { try { s.stop(); } catch (e) {} }
     this.sources.clear();
     this.playing = false;
+    for (const n of this.nodes.values()) for (const f of n.fx) if (f.inst.reset) f.inst.reset();
+    for (const f of this.bus.fx) if (f.inst.reset) f.inst.reset();
+    if (App.project) this.sync(App.project);
   },
 
   // ---- microphone / recording ----
@@ -281,7 +470,8 @@ const Engine = {
   async startRecord(trackId, fromBeat) {
     const mic = await this.getMic();
     const rec = new AudioWorkletNode(this.ctx, 'recorder', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
-    const info = { trackId, chunks: [], first: null, startBeat: Math.floor(fromBeat * 4 + 1e-6) / 4 };
+    const P = App.project;
+    const info = { trackId, chunks: [], first: null, startBeat: Math.floor(fromBeat * 4 + 1e-6) / 4, loop: P.loop.on && P.loop.end > P.loop.start ? { ...P.loop } : null, bpm: P.bpm };
     rec.port.onmessage = (e) => {
       if (info.first === null) info.first = e.data.t;
       info.chunks.push(e.data.d);
@@ -311,33 +501,61 @@ const Engine = {
     for (const c of info.chunks) { all.set(c, o); o += c.length; }
     const latency = (this.ctx.outputLatency || 0) + (this.ctx.baseLatency || 0);
     const trim = Math.max(0, Math.round((info.t0 - info.first + latency) * sr));
-    const len = total - trim;
-    if (len < sr * 0.1) return null;
-    const buf = this.ctx.createBuffer(1, len, sr);
-    buf.copyToChannel(all.subarray(trim), 0);
-    const id = Buffers.add(buf);
-    return { buf: id, start: info.startBeat, length: buf.duration / (60 / App.project.bpm), trackId: info.trackId };
+    const data = all.subarray(trim);
+    if (data.length < sr * 0.1) return null;
+    const spb = 60 / info.bpm;
+    const mk = (arr) => { const b = this.ctx.createBuffer(1, arr.length, sr); b.copyToChannel(arr, 0); return Buffers.add(b); };
+    const L = info.loop;
+    if (L && info.startBeat < L.end) {
+      // loop recording: every full pass through the loop becomes a take
+      const first = Math.round((L.end - info.startBeat) * spb * sr), passLen = Math.round((L.end - L.start) * spb * sr);
+      const takes = [];
+      if (info.startBeat <= L.start + 1e-6 && data.length >= first * 0.98) takes.push(mk(data.subarray(0, first)));
+      for (let p = first; p + passLen * 0.98 <= data.length; p += passLen) takes.push(mk(data.subarray(p, Math.min(data.length, p + passLen))));
+      if (takes.length) {
+        return { buf: takes[takes.length - 1], takes, start: L.start, length: L.end - L.start, trackId: info.trackId, srcBpm: info.bpm };
+      }
+    }
+    const id = mk(data);
+    return { buf: id, takes: [id], start: info.startBeat, length: data.length / sr / spb, trackId: info.trackId, srcBpm: info.bpm };
   },
 
   // ---- export ----
-  async render(P) {
+  async render(P, opts = {}) {
     const sr = 44100;
     const end = this.songEnd(P);
     if (!end) throw new Error('Nothing to export yet — add some clips first.');
+    await this.ensureInstruments(P);
+    await this.ensureStretched(P);
     const spStep = 60 / P.bpm / 4;
-    const len = Math.ceil((end * 4 * spStep + 3) * sr);
+    const len = Math.ceil((end * 4 * spStep + (opts.tail ?? 3)) * sr);
     const ctx = new OfflineAudioContext(2, len, sr);
     await ctx.audioWorklet.addModule('js/worklets.js');
-    const bus = this.buildMaster(ctx, ctx.destination);
+    const env = { bpm: P.bpm };
+    const bus = this.buildMaster(ctx, ctx.destination, env);
     bus.dly.delayTime.value = (60 / P.bpm) * 0.75;
+    if (!opts.noMaster) {
+      this.buildFx(ctx, bus, P.master.fx, env);
+      bus.vol.gain.value = P.master.volume;
+    }
     const nodes = new Map();
-    const anySolo = P.tracks.some((t) => t.solo);
-    for (const tr of P.tracks) {
-      const n = this.createTrackChain(ctx, tr, bus);
-      this.applyTrack(n, tr, anySolo, true);
+    const tracks = opts.only ? P.tracks.filter((t) => t.id === opts.only) : P.tracks;
+    const PP = { ...P, tracks };
+    const anySolo = !opts.only && tracks.some((t) => t.solo);
+    for (const tr of tracks) {
+      const n = this.createTrackChain(ctx, tr, bus, env);
+      n.env = env;
+      const t2 = opts.only ? { ...tr, mute: false, solo: false } : tr;
+      this.applyTrack(n, t2, anySolo, PP, false);
       nodes.set(tr.id, n);
     }
-    for (let s = 0; s < Math.round(end * 4); s++) this.scheduleStep(ctx, P, s, s * spStep + 0.02, false, nodes, noop);
-    return await ctx.startRendering();
+    const OFF = 0.05;
+    for (let s = 0; s < Math.round(end * 4); s++) this.scheduleStep(ctx, PP, s, s * spStep + OFF, s === 0, nodes, noop);
+    const out = await ctx.startRendering();
+    // drop the small scheduling lead-in
+    const lead = Math.round(OFF * sr);
+    const res = new AudioBuffer({ numberOfChannels: 2, length: out.length - lead, sampleRate: sr });
+    for (let c = 0; c < 2; c++) res.copyToChannel(out.getChannelData(c).subarray(lead), c);
+    return res;
   },
 };

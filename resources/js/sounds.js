@@ -87,12 +87,60 @@ const DRUM_KIT = [
   { id: 'rim', name: 'Rim' },
   { id: 'cowbell', name: 'Cowbell' },
   { id: '808', name: '808 Boom' },
+  { id: 'crash', name: 'Crash' },
+  { id: 'shaker', name: 'Shaker' },
+  { id: 'perc', name: 'Perc' },
 ];
 
-function playDrum(ctx, dest, kind, t, vel = 1, sample = null, reg = noop) {
+// Drum kits: each kind is described by a small recipe. Kits change the recipe numbers.
+const DRUM_KITS = {
+  'Classic': {},
+  '808': {
+    kick: { f0: 120, f1: 48, sweep: 0.06, dec: 0.9, click: 0.05, drive: 1.2 },
+    snare: { tone: [180, 330], tdec: 0.12, ndec: 0.18, hp: 1800, nl: 0.55 },
+    hat: { metal: 1, dec: 0.045 }, ohat: { metal: 1, dec: 0.45 },
+    tom: { f0: 170, f1: 120, dec: 0.5 }, clap: { bp: 1100, dec: 0.32 },
+  },
+  '909': {
+    kick: { f0: 220, f1: 50, sweep: 0.035, dec: 0.38, click: 0.45, drive: 2.2 },
+    snare: { tone: [190, 345], tdec: 0.09, ndec: 0.26, hp: 2200, nl: 0.8 },
+    hat: { metal: 0.6, dec: 0.06 }, ohat: { metal: 0.6, dec: 0.38 },
+    clap: { bp: 1600, dec: 0.28 },
+  },
+  'Trap': {
+    kick: { f0: 150, f1: 46, sweep: 0.05, dec: 0.7, click: 0.3, drive: 3 },
+    snare: { tone: [240], tdec: 0.06, ndec: 0.14, hp: 2500, nl: 0.9, clap: 0.6 },
+    hat: { metal: 0.8, dec: 0.028 }, ohat: { metal: 0.8, dec: 0.26 },
+    '808': { f0: 90, f1: 45, sweep: 0.12, dec: 2.0, drive: 3 },
+    clap: { bp: 1400, dec: 0.24 },
+  },
+  'Lo-fi': {
+    lofi: 2600,
+    kick: { f0: 130, f1: 45, sweep: 0.09, dec: 0.4, click: 0.1, drive: 1.5 },
+    snare: { tone: [200], tdec: 0.1, ndec: 0.2, hp: 900, nl: 0.5 },
+    hat: { metal: 0, dec: 0.04 }, ohat: { metal: 0, dec: 0.22 },
+  },
+  'House': {
+    kick: { f0: 170, f1: 52, sweep: 0.045, dec: 0.45, click: 0.35, drive: 1.8 },
+    snare: { tone: [200, 300], tdec: 0.08, ndec: 0.22, hp: 1500, nl: 0.7 },
+    hat: { metal: 0.5, dec: 0.05 }, ohat: { metal: 0.5, dec: 0.3 },
+    clap: { bp: 1300, dec: 0.35 },
+  },
+};
+const DEF_RECIPE = {
+  kick: { f0: 160, f1: 42, sweep: 0.12, dec: 0.5, click: 0.25, drive: 0 },
+  snare: { tone: [230], tdec: 0.11, ndec: 0.22, hp: 1200, nl: 0.6 },
+  hat: { metal: 0, dec: 0.05 }, ohat: { metal: 0, dec: 0.32 },
+  tom: { f0: 210, f1: 105, dec: 0.38 }, clap: { bp: 1300, dec: 0.3 },
+  '808': { f0: 75, f1: 48, sweep: 0.09, dec: 1.25, drive: 2 },
+};
+const METAL_F = [205.3, 304.4, 369.6, 522.7, 540, 800];
+
+function playDrum(ctx, dest, kind, t, vel = 1, sample = null, reg = noop, kit = 'Classic', pitch = 0) {
   if (sample) {
     const s = ctx.createBufferSource();
     s.buffer = sample;
+    if (pitch) s.playbackRate.value = Math.pow(2, pitch / 12);
     const g = ctx.createGain();
     g.gain.value = vel;
     s.connect(g).connect(dest);
@@ -100,25 +148,59 @@ function playDrum(ctx, dest, kind, t, vel = 1, sample = null, reg = noop) {
     reg(s);
     return;
   }
+  const K = DRUM_KITS[kit] || {};
+  const R = (k) => Object.assign({}, DEF_RECIPE[k] || {}, K[k] || {});
+  const pr = Math.pow(2, pitch / 12);
+  if (K.lofi) {
+    const lp = filter(ctx, 'lowpass', K.lofi, 0.5);
+    lp.connect(dest);
+    dest = lp;
+  }
+  const shaped = (amount) => {
+    if (!amount) return dest;
+    const sh = ctx.createWaveShaper();
+    sh.curve = driveCurve(amount);
+    sh.connect(dest);
+    return sh;
+  };
+  const metal = (dec, amt, lvl) => {
+    const bp = filter(ctx, 'bandpass', 10000, 0.8), hp = filter(ctx, 'highpass', 7000);
+    const g = envGain(ctx, t, vel * lvl, dec);
+    METAL_F.forEach((f) => osc(ctx, 'square', f * 1.0 * pr, t, t + dec + 0.1, reg).connect(bp));
+    const mg = ctx.createGain(); mg.gain.value = amt * 0.6;
+    bp.connect(hp).connect(mg).connect(g);
+    const n = noise(ctx, t, dec + 0.05, reg);
+    const ng = ctx.createGain(); ng.gain.value = 1 - amt * 0.6;
+    n.connect(filter(ctx, 'highpass', 7500)).connect(ng).connect(g);
+    g.connect(dest);
+  };
   switch (kind) {
     case 'kick': {
-      const o = osc(ctx, 'sine', 160, t, t + 0.6, reg);
-      o.frequency.exponentialRampToValueAtTime(42, t + 0.12);
-      o.connect(envGain(ctx, t, vel, 0.5)).connect(dest);
-      const c = noise(ctx, t, 0.02, reg);
-      c.connect(filter(ctx, 'highpass', 2000)).connect(envGain(ctx, t, vel * 0.25, 0.012)).connect(dest);
+      const r = R('kick');
+      const o = osc(ctx, 'sine', r.f0 * pr, t, t + r.dec + 0.1, reg);
+      o.frequency.exponentialRampToValueAtTime(r.f1 * pr, t + r.sweep);
+      o.connect(envGain(ctx, t, vel, r.dec)).connect(shaped(r.drive));
+      if (r.click) {
+        const c = noise(ctx, t, 0.02, reg);
+        c.connect(filter(ctx, 'highpass', 2500)).connect(envGain(ctx, t, vel * r.click, 0.01)).connect(dest);
+      }
       break;
     }
     case 'snare': {
-      const n = noise(ctx, t, 0.3, reg);
-      n.connect(filter(ctx, 'highpass', 1200)).connect(envGain(ctx, t, vel * 0.6, 0.22)).connect(dest);
-      const o = osc(ctx, 'triangle', 230, t, t + 0.2, reg);
-      o.frequency.exponentialRampToValueAtTime(160, t + 0.08);
-      o.connect(envGain(ctx, t, vel * 0.6, 0.11)).connect(dest);
+      const r = R('snare');
+      const n = noise(ctx, t, r.ndec + 0.08, reg);
+      n.connect(filter(ctx, 'highpass', r.hp)).connect(envGain(ctx, t, vel * r.nl, r.ndec)).connect(dest);
+      r.tone.forEach((f, i) => {
+        const o = osc(ctx, 'triangle', f * pr, t, t + r.tdec + 0.1, reg);
+        o.frequency.exponentialRampToValueAtTime(f * 0.7 * pr, t + 0.08);
+        o.connect(envGain(ctx, t, (vel * 0.6) / (i + 1), r.tdec)).connect(dest);
+      });
+      if (r.clap) playDrum(ctx, dest, 'clap', t, vel * r.clap, null, reg, kit, pitch);
       break;
     }
     case 'clap': {
-      const n = noise(ctx, t, 0.4, reg);
+      const r = R('clap');
+      const n = noise(ctx, t, r.dec + 0.1, reg);
       const g = ctx.createGain();
       g.gain.setValueAtTime(0.0001, t);
       for (let i = 0; i < 3; i++) {
@@ -127,116 +209,132 @@ function playDrum(ctx, dest, kind, t, vel = 1, sample = null, reg = noop) {
         g.gain.exponentialRampToValueAtTime(vel * 0.08 + 0.0001, tt + 0.01);
       }
       g.gain.setValueAtTime(vel * 0.7, t + 0.034);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
-      n.connect(filter(ctx, 'bandpass', 1300, 1.1)).connect(g).connect(dest);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + r.dec);
+      n.connect(filter(ctx, 'bandpass', r.bp * pr, 1.1)).connect(g).connect(dest);
       break;
     }
     case 'hat':
     case 'ohat': {
-      const dec = kind === 'hat' ? 0.05 : 0.32;
-      const n = noise(ctx, t, dec + 0.05, reg);
-      n.connect(filter(ctx, 'highpass', 7500)).connect(envGain(ctx, t, vel * 0.35, dec)).connect(dest);
+      const r = R(kind);
+      metal(r.dec, r.metal, kind === 'hat' ? 0.38 : 0.32);
+      break;
+    }
+    case 'crash': {
+      const dec = 1.6;
+      const n = noise(ctx, t, dec + 0.1, reg);
+      n.connect(filter(ctx, 'highpass', 4500)).connect(envGain(ctx, t, vel * 0.3, dec, 0.002)).connect(dest);
+      metal(dec * 0.7, 0.5, 0.15);
+      break;
+    }
+    case 'shaker': {
+      const n = noise(ctx, t, 0.12, reg);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(vel * 0.25, t + 0.025);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+      n.connect(filter(ctx, 'bandpass', 6500, 1.5)).connect(g).connect(dest);
+      break;
+    }
+    case 'perc': {
+      const o = osc(ctx, 'sine', 620 * pr, t, t + 0.25, reg);
+      o.frequency.exponentialRampToValueAtTime(380 * pr, t + 0.08);
+      o.connect(envGain(ctx, t, vel * 0.55, 0.18)).connect(dest);
       break;
     }
     case 'tom': {
-      const o = osc(ctx, 'sine', 210, t, t + 0.45, reg);
-      o.frequency.exponentialRampToValueAtTime(105, t + 0.25);
-      o.connect(envGain(ctx, t, vel * 0.8, 0.38)).connect(dest);
+      const r = R('tom');
+      const o = osc(ctx, 'sine', r.f0 * pr, t, t + r.dec + 0.1, reg);
+      o.frequency.exponentialRampToValueAtTime(r.f1 * pr, t + r.dec * 0.6);
+      o.connect(envGain(ctx, t, vel * 0.8, r.dec)).connect(dest);
       break;
     }
     case 'rim': {
-      const o = osc(ctx, 'triangle', 1700, t, t + 0.05, reg);
+      const o = osc(ctx, 'triangle', 1700 * pr, t, t + 0.05, reg);
       o.connect(envGain(ctx, t, vel * 0.5, 0.03)).connect(dest);
       const n = noise(ctx, t, 0.03, reg);
       n.connect(filter(ctx, 'bandpass', 3200, 2)).connect(envGain(ctx, t, vel * 0.4, 0.02)).connect(dest);
       break;
     }
     case 'cowbell': {
-      const bp = filter(ctx, 'bandpass', 800, 1.5);
+      const bp = filter(ctx, 'bandpass', 800 * pr, 1.5);
       const g = envGain(ctx, t, vel * 0.35, 0.35);
-      osc(ctx, 'square', 545, t, t + 0.4, reg).connect(bp);
-      osc(ctx, 'square', 815, t, t + 0.4, reg).connect(bp);
+      osc(ctx, 'square', 545 * pr, t, t + 0.4, reg).connect(bp);
+      osc(ctx, 'square', 815 * pr, t, t + 0.4, reg).connect(bp);
       bp.connect(g).connect(dest);
       break;
     }
     case '808': {
-      const o = osc(ctx, 'sine', 75, t, t + 1.4, reg);
-      o.frequency.exponentialRampToValueAtTime(48, t + 0.09);
-      const sh = ctx.createWaveShaper();
-      sh.curve = driveCurve(2);
-      o.connect(sh).connect(envGain(ctx, t, vel * 0.9, 1.25, 0.003)).connect(dest);
+      const r = R('808');
+      const o = osc(ctx, 'sine', r.f0 * pr, t, t + r.dec + 0.2, reg);
+      o.frequency.exponentialRampToValueAtTime(r.f1 * pr, t + r.sweep);
+      o.connect(envGain(ctx, t, vel * 0.9, r.dec, 0.003)).connect(shaped(r.drive));
       break;
     }
   }
 }
 
-// Synth instruments. osc: t=type, d=detune cents, o=semitone offset, g=gain
-const SYNTHS = {
-  'Super Saw': { osc: [{ t: 'sawtooth', d: -14 }, { t: 'sawtooth', d: 14 }, { t: 'sawtooth', o: -12, g: 0.6 }], f: { freq: 2400, q: 1, env: 3000 }, a: [0.01, 0.3, 0.7, 0.35], g: 0.12 },
-  'Square Lead': { osc: [{ t: 'square', d: -6 }, { t: 'square', d: 6 }], f: { freq: 2800, q: 2, env: 1500 }, a: [0.005, 0.2, 0.6, 0.15], g: 0.09 },
-  'Soft Pad': { osc: [{ t: 'sawtooth', d: -9 }, { t: 'sawtooth', d: 9 }, { t: 'triangle', o: 12, g: 0.5 }], f: { freq: 900, q: 0.7, env: 700 }, a: [0.45, 0.6, 0.85, 1.1], g: 0.1 },
-  'Strings': { osc: [{ t: 'sawtooth', d: -11 }, { t: 'sawtooth', d: 11 }, { t: 'sawtooth', d: 0, g: 0.6 }], f: { freq: 2200, q: 0.5, env: 0 }, a: [0.25, 0.4, 0.9, 0.6], g: 0.08 },
-  'Bass': { osc: [{ t: 'sawtooth' }, { t: 'square', o: -12, g: 0.6 }], f: { freq: 320, q: 6, env: 1400 }, a: [0.003, 0.18, 0.55, 0.1], g: 0.2 },
-  '808 Bass': { osc: [{ t: 'sine' }, { t: 'triangle', g: 0.15 }], a: [0.003, 1.4, 0.45, 0.25], g: 0.42, drive: 2.5, glide: 7 },
-  'Electric Piano': { osc: [{ t: 'sine' }, { t: 'sine', o: 12, g: 0.25 }, { t: 'triangle', o: 24, g: 0.05 }], a: [0.003, 1.3, 0.2, 0.4], g: 0.26 },
-  'Pluck': { osc: [{ t: 'sawtooth', d: -6 }, { t: 'square', d: 6, g: 0.5 }], f: { freq: 380, q: 3, env: 5000, decay: 0.15 }, a: [0.002, 0.4, 0, 0.25], g: 0.14 },
-  'Organ': { osc: [{ t: 'sine' }, { t: 'sine', o: 12, g: 0.5 }, { t: 'sine', o: 19, g: 0.3 }, { t: 'sine', o: 24, g: 0.25 }], a: [0.01, 0.1, 1, 0.08], g: 0.12 },
-  'Bell': { osc: [{ t: 'sine' }, { t: 'sine', o: 19, d: 3, g: 0.35 }, { t: 'sine', o: 28, g: 0.15 }], a: [0.002, 1.8, 0, 1.2], g: 0.2 },
+// ---- Sampler: real recorded instruments ----
+function parseNote(n) {
+  const m = /^([A-G])(s?)(-?\d)$/.exec(n);
+  const pc = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[m[1]] + (m[2] ? 1 : 0);
+  return (+m[3] + 1) * 12 + pc;
+}
+const Sampler = {
+  cache: new Map(),
+  load(name, ctx) {
+    const inst = INSTRUMENTS[name];
+    if (!inst) return Promise.resolve(null);
+    if (this.cache.has(name)) return this.cache.get(name).promise;
+    const entry = { list: [] };
+    entry.promise = Promise.all(inst.notes.map(async (n) => {
+      const r = await fetch(`samples/${inst.dir}/${n}.mp3`);
+      const buf = await ctx.decodeAudioData(await r.arrayBuffer());
+      entry.list.push({ midi: parseNote(n), buf });
+    })).then(() => { entry.list.sort((a, b) => a.midi - b.midi); entry.ready = true; return entry; });
+    this.cache.set(name, entry);
+    return entry.promise;
+  },
+  ready(name) { return !!this.cache.get(name)?.ready; },
+  play(ctx, dest, name, midi, t, dur, vel = 0.8, reg = noop) {
+    const inst = INSTRUMENTS[name], e = this.cache.get(name);
+    if (!inst || !e || !e.ready) return { release: noop };
+    let best = e.list[0];
+    for (const s of e.list) if (Math.abs(s.midi - midi) < Math.abs(best.midi - midi)) best = s;
+    const src = ctx.createBufferSource();
+    src.buffer = best.buf;
+    src.playbackRate.value = Math.pow(2, (midi - best.midi) / 12);
+    const g = ctx.createGain();
+    const peak = 0.9 * Math.pow(vel, 1.4);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(peak, t + inst.att);
+    let head = g;
+    if (inst.bright) {
+      const lp = filter(ctx, 'lowpass', 1200 + vel * vel * 16000, 0.5);
+      lp.connect(g);
+      head = lp;
+    }
+    src.connect(head);
+    g.connect(dest);
+    src.start(t);
+    reg(src);
+    const release = (rt) => {
+      if (g.gain.cancelAndHoldAtTime) g.gain.cancelAndHoldAtTime(rt);
+      g.gain.setTargetAtTime(0, rt, inst.rel / 3);
+      try { src.stop(rt + inst.rel * 2 + 0.05); } catch (e) {}
+    };
+    if (dur != null) {
+      g.gain.setTargetAtTime(0, t + dur, inst.rel / 3);
+      src.stop(t + dur + inst.rel * 2 + 0.05);
+    }
+    return { release };
+  },
 };
 
-function playNote(ctx, dest, name, midi, t, dur, vel = 0.8, reg = noop) {
-  const p = SYNTHS[name] || SYNTHS['Super Saw'];
-  const [A, D, S, R] = p.a;
-  const f0 = mtof(midi);
-  const out = ctx.createGain();
-  const peak = p.g * vel;
-  out.gain.setValueAtTime(0, t);
-  out.gain.linearRampToValueAtTime(peak, t + A);
-  out.gain.setTargetAtTime(Math.max(peak * S, 0), t + A, D / 3 + 0.001);
-  out.connect(dest);
-  let head = out;
-  if (p.drive) {
-    const sh = ctx.createWaveShaper();
-    sh.curve = driveCurve(p.drive);
-    sh.connect(head);
-    head = sh;
-  }
-  if (p.f) {
-    const fl = ctx.createBiquadFilter();
-    fl.type = 'lowpass';
-    fl.Q.value = p.f.q || 0.7;
-    fl.frequency.setValueAtTime(Math.min(p.f.freq + (p.f.env || 0), 18000), t);
-    fl.frequency.setTargetAtTime(p.f.freq, t, (p.f.decay || D) / 3 + 0.001);
-    fl.connect(head);
-    head = fl;
-  }
-  const oscs = p.osc.map((o) => {
-    const os = ctx.createOscillator();
-    os.type = o.t;
-    const fr = f0 * Math.pow(2, (o.o || 0) / 12);
-    if (p.glide) {
-      os.frequency.setValueAtTime(fr * Math.pow(2, p.glide / 12), t);
-      os.frequency.exponentialRampToValueAtTime(fr, t + 0.06);
-    } else os.frequency.setValueAtTime(fr, t);
-    os.detune.value = o.d || 0;
-    const g = ctx.createGain();
-    g.gain.value = o.g ?? 1;
-    os.connect(g).connect(head);
-    os.start(t);
-    reg(os);
-    return os;
-  });
-  const release = (rt) => {
-    if (out.gain.cancelAndHoldAtTime) out.gain.cancelAndHoldAtTime(rt);
-    out.gain.setTargetAtTime(0, rt, R / 3 + 0.001);
-    oscs.forEach((o) => { try { o.stop(rt + R * 2 + 0.05); } catch (e) {} });
-  };
-  if (dur != null) {
-    const rt = t + dur;
-    out.gain.setTargetAtTime(0, rt, R / 3 + 0.001);
-    oscs.forEach((o) => o.stop(rt + R * 2 + 0.05));
-  }
-  return { release };
+// Play any instrument (sampler or synth patch)
+function playInstrument(ctx, dest, inst, midi, t, dur, vel = 0.8, reg = noop) {
+  if (!inst) return { release: noop };
+  if (inst.kind === 'sampler') return Sampler.play(ctx, dest, inst.name, midi, t, dur, vel, reg);
+  return playPatch(ctx, dest, inst.patch, midi, t, dur, vel, reg);
 }
 
 function playClick(ctx, dest, t, accent) {

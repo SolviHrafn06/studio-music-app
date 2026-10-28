@@ -1,6 +1,6 @@
 {
   "applicationId": "com.studio.musicapp",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "defaultMode": "window",
   "port": 0,
   "documentRoot": "/resources/",
@@ -26,7 +26,7 @@
       "maximize": true,
       "hidden": false,
       "resizable": true,
-      "exitProcessOnClose": true
+      "exitProcessOnClose": false
     }
   },
   "cli": {
