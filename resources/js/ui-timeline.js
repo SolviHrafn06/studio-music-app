@@ -35,8 +35,10 @@ function autoTargets(tr) {
   for (const f of tr.fx || []) for (const sp of FX[f.type].params) if (sp.auto) list.push([`fx:${f.id}:${sp.id}`, `${FX[f.type].name} · ${sp.label}`]);
   return list;
 }
-function instrumentOptions() {
-  const groups = [{ group: 'Real instruments', items: Object.keys(INSTRUMENTS) }, { group: 'Sampler', items: [['__sampler', 'Sampler / Slicer (load a sample)…']] }];
+function instrumentOptions(cur) {
+  const groups = [];
+  if (cur && cur.kind === 'synth' && !SYNTH_PRESETS[cur.name]) groups.push({ group: 'This track', items: [[cur.name, cur.name + ' (custom)']] });
+  groups.push({ group: 'Real instruments', items: Object.keys(INSTRUMENTS) }, { group: 'Sampler', items: [['__sampler', 'Sampler / Slicer (load a sample)…']] });
   const cats = {};
   for (const [n, p] of Object.entries(SYNTH_PRESETS)) (cats[p.cat] ||= []).push(n);
   for (const [c, items] of Object.entries(cats)) groups.push({ group: 'Synth · ' + c, items });
@@ -44,6 +46,7 @@ function instrumentOptions() {
 }
 function instValue(inst) { return inst.kind === 'sample' ? '__sampler' : inst.name; }
 async function setInstrument(tr, name) {
+  if (tr.inst && tr.inst.kind === 'synth' && name === tr.inst.name && !SYNTH_PRESETS[name]) return;
   if (name === '__sampler') {
     const files = await pickFiles('#file-sample');
     if (!files.length) { Headers.render(); return; }
@@ -75,7 +78,7 @@ const Headers = {
       if (tr.type === 'audio') row2.push(btn('mon', '🎧', 'Monitor: hear this track’s input live (Input & Amp tab)', Engine.monitors.has(tr.id), () => InputPanel.toggleMonitor(tr)));
       if (tr.type === 'audio') row2.push(btn('at', 'AT', 'Auto-Tune on/off', tr.autotune.on, () => App.mutate(() => (tr.autotune.on = !tr.autotune.on))));
       row2.push(btn('aut' + (tr.auto.some((l) => l.pts.length) ? ' has' : ''), 'A', 'Show automation lane', tr.autoShow, () => App.mutate(() => (tr.autoShow = !tr.autoShow))));
-      if (tr.type === 'synth') row2.push(options(h('select', { title: 'Instrument', onmousedown: (e) => e.stopPropagation(), onchange: (e) => setInstrument(tr, e.target.value) }), instrumentOptions(), instValue(tr.inst)));
+      if (tr.type === 'synth') row2.push(options(h('select', { title: 'Instrument', onmousedown: (e) => e.stopPropagation(), onchange: (e) => setInstrument(tr, e.target.value) }), instrumentOptions(tr.inst), instValue(tr.inst)));
       if (tr.type === 'drums') row2.push(options(h('select', { title: 'Drum kit', onmousedown: (e) => e.stopPropagation(), onchange: (e) => App.mutate(() => (tr.kit = e.target.value), false) }), Object.keys(DRUM_KITS).map((k) => [k, k + ' kit']), tr.kit));
       const vol = h('input', {
         type: 'range', min: 0, max: 1.2, step: 0.01, value: tr.volume, title: 'Volume', class: 'hvol',

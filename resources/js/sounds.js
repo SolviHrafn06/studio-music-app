@@ -136,7 +136,60 @@ const DEF_RECIPE = {
 };
 const METAL_F = [205.3, 304.4, 369.6, 522.7, 540, 800];
 
-function playDrum(ctx, dest, kind, t, vel = 1, sample = null, reg = noop, kit = 'Classic', pitch = 0) {
+// Every voice goes through one output gain that disconnects itself once all its sound sources have
+// finished — otherwise finished notes stay in the audio graph and the app slows down over time.
+function voiceOut(ctx, dest, reg) {
+  const out = ctx.createGain();
+  out.connect(dest);
+  let n = 0;
+  const r = (s) => {
+    n++;
+    s.addEventListener('ended', () => { if (--n === 0) { try { out.disconnect(); } catch (e) {} } });
+    reg(s);
+  };
+  return { out, reg: r };
+}
+
+// Synthesized drum hits are rendered once per kit/sound/pitch and then played from memory (much less CPU).
+const DrumCache = {
+  map: new Map(),
+  pending: new Map(),
+  key: (kit, kind, pitch) => kit + '|' + kind + '|' + pitch,
+  get(kit, kind, pitch) { return this.map.get(this.key(kit, kind, pitch)); },
+  ensure(kit, kind, pitch) {
+    const k = this.key(kit, kind, pitch);
+    if (this.map.has(k)) return Promise.resolve(this.map.get(k));
+    if (this.pending.has(k)) return this.pending.get(k);
+    const sr = 44100, len = kind === '808' ? 2.6 : kind === 'crash' ? 2.2 : kind === 'kick' ? 1.1 : 0.8;
+    const ctx = new OfflineAudioContext(1, Math.ceil(sr * len), sr);
+    playDrum(ctx, ctx.destination, kind, 0, 1, null, noop, kit, pitch, true);
+    const p = ctx.startRendering().then((b) => { this.map.set(k, b); this.pending.delete(k); return b; });
+    this.pending.set(k, p);
+    return p;
+  },
+  warm(P) {
+    const ps = [];
+    for (const t of P.tracks) if (t.type === 'drums') for (const ch of t.channels) if (!ch.sample) ps.push(this.ensure(t.kit || 'Classic', ch.kind, ch.pitch || 0));
+    return Promise.all(ps);
+  },
+};
+
+function playDrum(ctx, dest, kind, t, vel = 1, sample = null, reg = noop, kit = 'Classic', pitch = 0, raw = false) {
+  { const V = voiceOut(ctx, dest, reg); dest = V.out; reg = V.reg; }
+  if (!sample && !raw) {
+    const cb = DrumCache.get(kit, kind, pitch);
+    if (cb) {
+      const s = ctx.createBufferSource();
+      s.buffer = cb;
+      const g = ctx.createGain();
+      g.gain.value = vel;
+      s.connect(g).connect(dest);
+      s.start(t);
+      reg(s);
+      return;
+    }
+    DrumCache.ensure(kit, kind, pitch);
+  }
   if (sample) {
     const s = ctx.createBufferSource();
     s.buffer = sample;
@@ -296,6 +349,7 @@ const Sampler = {
   },
   ready(name) { return !!this.cache.get(name)?.ready; },
   play(ctx, dest, name, midi, t, dur, vel = 0.8, reg = noop) {
+    { const V = voiceOut(ctx, dest, reg); dest = V.out; reg = V.reg; }
     const inst = INSTRUMENTS[name], e = this.cache.get(name);
     if (!inst || !e || !e.ready) return { release: noop };
     let best = e.list[0];

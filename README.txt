@@ -1,4 +1,4 @@
-STUDIO 3.0 - free music maker with built-in Auto-Tune
+STUDIO 3.0.1 - free music maker with built-in Auto-Tune
 =====================================================
 
 INSTALL
@@ -10,6 +10,12 @@ INSTALL
   If Windows SmartScreen says "Windows protected your PC", click
   "More info" -> "Run anyway" (it does that for any unsigned app).
   Needs Windows 10 or 11. Allow microphone / MIDI access when asked.
+
+NEW IN 3.0.1
+  - Much faster: export is up to 5x quicker on long songs, drums use far less
+    CPU, and long playback sessions no longer slow down over time.
+  - Custom sounds show their name in the instrument menus.
+  - Demo track "Neon Riot" (dubstep) included - open "Neon Riot.studio".
 
 NEW IN 3.0 - FOR FL STUDIO USERS
   - Sampler / Slicer: load any sample and play it across the keyboard, or

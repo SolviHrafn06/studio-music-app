@@ -84,6 +84,7 @@ function adsr(param, t, base, peak, e, sus) {
 }
 
 function playPatch(ctx, dest, p, midi, t, dur, vel = 0.8, reg = noop) {
+  { const V = voiceOut(ctx, dest, reg); dest = V.out; reg = V.reg; }
   const f0 = mtof(midi);
   const out = ctx.createGain();
   const peak = 0.22 * p.gain * vel;

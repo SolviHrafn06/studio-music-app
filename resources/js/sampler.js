@@ -20,6 +20,7 @@ function sliceBounds(inst, i, dur) {
   return [s0, s1];
 }
 function playSample(ctx, dest, inst, midi, t, dur, vel = 0.8, reg = noop) {
+  { const V = voiceOut(ctx, dest, reg); dest = V.out; reg = V.reg; }
   const buf = sampleBuffer(inst);
   if (!buf) return { release: noop };
   let off = 0, len = buf.duration, rate;

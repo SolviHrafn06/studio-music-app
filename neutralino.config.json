@@ -1,6 +1,6 @@
 {
   "applicationId": "com.studio.musicapp",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "defaultMode": "window",
   "port": 0,
   "documentRoot": "/resources/",

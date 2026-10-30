@@ -207,7 +207,7 @@ const Piano = {
     if (this.clip !== c) { this.sel.clear(); this.clip = c; }
     this.tr = tr; this.c = c;
     this.steps = Math.round(c.length * 4);
-    const instSel = options(h('select', { onchange: (e) => setInstrument(tr, e.target.value) }), instrumentOptions(), instValue(tr.inst));
+    const instSel = options(h('select', { onchange: (e) => setInstrument(tr, e.target.value) }), instrumentOptions(tr.inst), instValue(tr.inst));
     const snapSel = options(h('select', { onchange: (e) => { this.snap = +e.target.value; this.draw(); } }), SNAPS.map(([l, v]) => [v, l]), this.snap);
     const lenSel = options(h('select', { onchange: (e) => (App.noteLen = +e.target.value) }), [[0.5, '1/32'], [1, '1/16'], [2, '1/8'], [4, '1/4'], [8, '1/2'], [16, '1 bar']], App.noteLen);
     const barsIn = h('input', { type: 'number', min: 0.25, max: 64, step: 0.25, value: c.length / 4, title: 'Clip length in bars', onchange: (e) => App.mutate(() => (c.length = clamp(+e.target.value || 1, 0.25, 64) * 4)) });
@@ -539,7 +539,7 @@ const Inst = {
     if (!tr) { panel.append(h('div', { class: 'empty' }, 'Select an instrument track. ', h('button', { class: 'primary', onclick: () => addTrack('synth') }, '+ Add Instrument'))); return; }
     const inst = tr.inst;
     const ups = userPresets();
-    const optsList = instrumentOptions();
+    const optsList = instrumentOptions(ups[inst.name] ? null : inst);
     if (Object.keys(ups).length) optsList.push({ group: 'My presets', items: Object.keys(ups).map((k) => ['user:' + k, k]) });
     const sel = options(h('select', {
       onchange: (e) => {

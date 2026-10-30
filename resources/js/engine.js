@@ -267,6 +267,7 @@ const Engine = {
   },
 
   ensureInstruments(P) {
+    DrumCache.warm(P);
     const names = new Set();
     for (const t of P.tracks) if (t.type === 'synth' && t.inst.kind === 'sampler') names.add(t.inst.name);
     return Promise.all([...names].map((nm) => Sampler.load(nm, this.ctx)));
@@ -380,6 +381,7 @@ const Engine = {
           }
           src.connect(g).connect(n.input);
           src.start(startT, off, Math.min(dur, buf.duration - off));
+          src.addEventListener('ended', () => { try { g.disconnect(); } catch (e) {} });
           reg(src);
         }
       }
@@ -626,6 +628,7 @@ const Engine = {
     const end = this.songEnd(P);
     if (!end) throw new Error('Nothing to export yet — add some clips first.');
     await this.ensureInstruments(P);
+    await DrumCache.warm(P);
     await this.ensureStretched(P);
     const spStep = 60 / P.bpm / 4;
     const len = Math.ceil((end * 4 * spStep + (opts.tail ?? 3)) * sr);
@@ -651,7 +654,15 @@ const Engine = {
     }
     this.route(nodes, PP, bus);
     const OFF = 0.05;
-    for (let s = 0; s < Math.round(end * 4); s++) this.scheduleStep(ctx, PP, s, s * spStep + OFF, s === 0, nodes, noop);
+    // schedule in chunks while rendering (suspend/resume) so only nearby notes exist in the graph
+    const total = Math.round(end * 4), CH = 16;
+    let next = 0;
+    const until = (stepEnd) => { for (; next < Math.min(stepEnd, total); next++) this.scheduleStep(ctx, PP, next, next * spStep + OFF, next === 0, nodes, noop); };
+    until(CH * 2);
+    for (let k = 1; k * CH < total; k++) {
+      const at = Math.floor(((k * CH * spStep + OFF) * sr) / 128) * 128 / sr;
+      ctx.suspend(at).then(() => { until((k + 2) * CH); ctx.resume(); });
+    }
     const out = await ctx.startRendering();
     // drop the small scheduling lead-in
     const lead = Math.round(OFF * sr);
