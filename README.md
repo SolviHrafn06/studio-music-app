@@ -61,7 +61,7 @@ node tests/run.js mixer           # only tests whose file name contains "mixer"
 SHOTS=./shots npm test            # keep the screenshots the tests take
 ```
 
-Each `tests/*.test.js` file starts its own static server for `resources/` (`tests/serve.js`). A test fails if it exits non-zero, prints a line starting with `✗`, or doesn't end with `no errors`. They also run on every push and pull request via GitHub Actions (`.github/workflows/tests.yml`).
+Each `tests/*.test.js` file starts its own static server for `resources/` (`tests/serve.js`) and fails if it exits non-zero, prints a line starting with `✗`, or doesn't end with `no errors`. `tests/*.test.cjs` files use Node's built-in `node:test`; the runner serves `resources/` for them and passes `STUDIO_BASE_URL` and `CHROMIUM_PATH`. They also run on every push and pull request via GitHub Actions (`.github/workflows/tests.yml`).
 
 ## Building the Windows release
 
