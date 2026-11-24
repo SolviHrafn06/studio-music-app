@@ -7,8 +7,26 @@ function typingActive() {
   const tr = App.track(App.selTrackId);
   return App.typing && tr && (tr.type === 'synth' || tr.type === 'drums');
 }
+function shortcutOverlay() {
+  return $('#busy.on') || $$('.modal-ov').pop() || Menu.el;
+}
 function onKeyDown(e) {
   if (/^F(5|6|7|8|9|10|11|12)$/.test(e.key) || (e.ctrlKey && e.key.toLowerCase() === 'r')) e.preventDefault();
+  const overlay = shortcutOverlay();
+  if (overlay) {
+    const inOverlay = e.target?.nodeType && overlay.contains(e.target);
+    if (!inOverlay && (e.key === ' ' || e.key === 'Enter')) e.preventDefault();
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (overlay === Menu.el) Menu.hide();
+      else overlay.querySelector('[data-modal-cancel]')?.click();
+    } else if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey &&
+      !(inOverlay && e.target.matches?.('button, select, textarea, input[type=button], input[type=submit]'))) {
+      const primary = overlay.querySelector('button.primary:not(:disabled)');
+      if (primary) { e.preventDefault(); primary.click(); }
+    }
+    return;
+  }
   if (isTyping(e)) return;
   const fk = { F5: () => toggleBottom(), F6: () => Panels.show('rack'), F7: () => Panels.show('piano'), F8: () => Panels.show('browser'), F9: () => Panels.show('mixer'), F10: () => AudioSettings.open(), F11: () => Panels.show('fx'), F12: () => Panels.show('vocal') }[e.key];
   if (fk) { fk(); return; }
@@ -51,8 +69,11 @@ function onKeyDown(e) {
   if (k === 's') { Edit.split(); return; }
 }
 function onKeyUp(e) {
-  if (e.key === ' ') e.preventDefault();
-  App.noteOff('k' + e.key.toLowerCase());
+  const overlay = shortcutOverlay();
+  if (e.key === ' ' && (!overlay || !e.target?.nodeType || !overlay.contains(e.target))) e.preventDefault();
+  // Release keys pressed before a dialog opened, without swallowing its button keys.
+  const key = 'k' + e.key.toLowerCase();
+  if (App.held.has(key)) App.noteOff(key);
 }
 function toggleBottom() {
   const cur = getComputedStyle(document.body).getPropertyValue('--bottom-h').trim();

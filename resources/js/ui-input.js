@@ -231,7 +231,7 @@ const AudioSettings = {
     const midiList = MIDI.acc ? [...MIDI.acc.inputs.values()].map((i) => i.name) : [];
     const ov = h('div', { class: 'modal-ov', onmousedown: (e) => { if (e.target === ov) close(); } },
       h('div', { class: 'modal' },
-        h('div', { class: 'modal-head' }, h('h3', {}, '⚙ Audio settings'), h('button', { class: 'mini', onclick: close }, '✕')),
+        h('div', { class: 'modal-head' }, h('h3', {}, '⚙ Audio settings'), h('button', { class: 'mini', 'data-modal-cancel': true, onclick: close }, '✕')),
         h('label', { class: 'lab' }, 'Output (speakers / headphones / interface)'), outSel,
         h('label', { class: 'lab' }, 'Default input for new tracks'), inSel,
         !Devices.granted ? h('div', { class: 'hint2 warn' }, 'Device names show after you allow microphone access. ', h('button', { class: 'mini', onclick: async () => { try { await Engine.openInput('default'); } catch (e) {} close(); this.open(); } }, 'Allow access')) : null,
