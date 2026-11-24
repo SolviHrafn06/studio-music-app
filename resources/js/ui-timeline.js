@@ -122,7 +122,13 @@ const Headers = {
       { label: 'Effects…', action: () => { App.fxTrackId = tr.id; Panels.show('fx'); } },
       { label: 'Bounce to audio (freeze)', disabled: tr.type === 'bus' || !tr.clips.length, action: () => AudioTools.bounce(tr) },
       '-',
-      { label: 'Delete track', action: () => App.mutate(() => { P.tracks = P.tracks.filter((t) => t !== tr); }) },
+      { label: 'Delete track', action: () => App.mutate(() => {
+        P.tracks = P.tracks.filter((t) => t !== tr);
+        for (const t of P.tracks) if (t.out === tr.id) t.out = null;
+        for (const f of [...P.tracks.flatMap((t) => t.fx), ...P.master.fx]) {
+          if (f.type === 'scomp' && f.p.src === tr.id) f.p.src = '';
+        }
+      }) },
     ]);
   },
 };
