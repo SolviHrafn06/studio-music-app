@@ -781,13 +781,28 @@ async function loadProjectText(text, name) {
 }
 // small "working..." overlay with a progress bar
 const Busy = {
-  show(text) {
+  // show(text, onCancel?) -> { progress(f), text(t), hide(), cancelled }
+  show(text, onCancel) {
     let el = $('#busy');
-    if (!el) { el = h('div', { id: 'busy' }, h('div', { class: 'busy-card' }, h('div', { class: 'busy-text' }), h('div', { class: 'busy-bar' }, h('i')))); document.body.append(el); }
+    if (!el) {
+      el = h('div', { id: 'busy' }, h('div', { class: 'busy-card' }, h('div', { class: 'busy-text' }), h('div', { class: 'busy-bar' }, h('i')),
+        h('div', { class: 'busy-foot' }, h('span', { class: 'busy-pct' }), h('button', { class: 'busy-cancel mini' }, 'Cancel'))));
+      document.body.append(el);
+    }
+    const handle = { cancelled: false };
+    const cancelBtn = el.querySelector('.busy-cancel');
+    cancelBtn.style.display = onCancel ? '' : 'none';
+    cancelBtn.disabled = false; cancelBtn.textContent = 'Cancel';
+    cancelBtn.onclick = () => { handle.cancelled = true; cancelBtn.disabled = true; cancelBtn.textContent = 'Cancelling...'; if (onCancel) onCancel(); };
     el.querySelector('.busy-text').textContent = text;
     el.querySelector('.busy-bar i').style.width = '0%';
+    el.querySelector('.busy-pct').textContent = '';
     el.classList.add('on');
-    return { progress: (f) => (el.querySelector('.busy-bar i').style.width = Math.round(f * 100) + '%'), hide: () => el.classList.remove('on'), text: (t) => (el.querySelector('.busy-text').textContent = t) };
+    return Object.assign(handle, {
+      progress: (f) => { el.querySelector('.busy-bar i').style.width = Math.round(f * 100) + '%'; el.querySelector('.busy-pct').textContent = Math.round(f * 100) + '%'; },
+      hide: () => el.classList.remove('on'),
+      text: (t) => (el.querySelector('.busy-text').textContent = t),
+    });
   },
 };
 async function openProject() {
@@ -831,27 +846,43 @@ function encodeMP3(buf, kbps = 192, onProgress) {
 async function exportSong(fmt) {
   if (Engine.playing) await App.stop();
   const P = App.project;
+  let busy = null;
   try {
     if (fmt === 'stems') {
+      const list = Engine.stemList(P);
+      if (!list.length) { toast('Nothing to export yet — add some clips first.', 4000); return; }
       let dir = null;
       if (NL()) { dir = await Neutralino.os.showFolderDialog('Choose a folder for the stems'); if (!dir) return; }
-      for (let i = 0; i < P.tracks.length; i++) {
-        const tr = P.tracks[i];
-        if (!tr.clips.length) continue;
-        toast(`Rendering stem ${i + 1}/${P.tracks.length}: ${tr.name}…`, 20000);
-        const buf = await Engine.render(P, { only: tr.id, noMaster: true });
-        await saveBytes(`${safeName(P.name)} - ${String(i + 1).padStart(2, '0')} ${safeName(tr.name)}.wav`, encodeWAV(buf), 'WAV audio', 'wav', dir || 'downloads');
-      }
-      toast(dir ? 'Stems saved to ' + dir : 'Stems downloaded', 5000);
+      busy = Busy.show(`Rendering ${list.length} stems...`, () => {});
+      let n = 0;
+      await Engine.renderStems(P, {
+        isCancelled: () => busy.cancelled,
+        onProgress: (f) => busy.progress(f),
+        onPass: async (stems) => {
+          for (const st of stems) {
+            n++;
+            busy.text(`Saving stem ${n}/${list.length}: ${st.name}`);
+            await saveBytes(`${safeName(P.name)} - ${String(n).padStart(2, '0')} ${safeName(st.name)}.wav`, encodeWAV(st.buffer), 'WAV audio', 'wav', dir || 'downloads');
+          }
+          busy.text(n < list.length ? `Rendering stems ${n + 1}-${list.length}...` : 'Done');
+        },
+      });
+      busy.hide();
+      toast((dir ? `${n} stems saved to ` + dir : `${n} stems downloaded`), 5000);
       return;
     }
-    toast('Rendering your song…', 20000);
-    const buf = await Engine.render(P);
+    busy = Busy.show('Rendering your song...', () => {});
+    const buf = await Engine.render(P, { isCancelled: () => busy.cancelled, onProgress: (f) => busy.progress(fmt === 'mp3' ? f * 0.7 : f) });
     if (fmt === 'mp3') {
-      const bytes = await encodeMP3(buf, 192, (p) => toast(`Encoding MP3… ${Math.round(p * 100)}%`, 20000));
+      busy.text('Encoding MP3...');
+      const bytes = await encodeMP3(buf, 192, (p) => busy.progress(0.7 + p * 0.3));
+      if (busy.cancelled) throw Object.assign(new Error('Export cancelled'), { cancelled: true });
+      busy.hide();
       await saveBytes(safeName(P.name) + '.mp3', bytes, 'MP3 audio', 'mp3');
-    } else await saveBytes(safeName(P.name) + '.wav', encodeWAV(buf), 'WAV audio', 'wav');
+    } else { busy.hide(); await saveBytes(safeName(P.name) + '.wav', encodeWAV(buf), 'WAV audio', 'wav'); }
   } catch (e) {
+    if (busy) busy.hide();
+    if (e.cancelled) { toast('Export cancelled.', 3000); return; }
     console.error(e);
     toast(e.message, 5000);
   }

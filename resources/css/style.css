@@ -465,3 +465,4 @@ kbd { background: var(--bg3); border: 1px solid var(--line); border-bottom-width
 .head-resize:hover, body.col-resizing .head-resize { background: var(--accent); opacity: .6; }
 body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-select: none; }
 .track-header .row select.inst-sel { flex: 1 1 auto; min-width: 70px; max-width: none; }
+#busy .busy-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; min-height: 22px; font-size: 12px; color: var(--muted); }

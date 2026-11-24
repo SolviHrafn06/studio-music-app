@@ -94,7 +94,7 @@ const Engine = {
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 2048;
     fxOut.connect(comp).connect(vol).connect(analyser).connect(dest);
-    const m = { input, revIn, dlyIn, dly, vol, analyser, fxIn, fxOut, fx: [], fxKey: null };
+    const m = { input, revIn, dlyIn, dly, revOut, dlyOut: lp, vol, analyser, fxIn, fxOut, fx: [], fxKey: null };
     this.buildFx(ctx, m, [], env);
     return m;
   },
@@ -623,6 +623,39 @@ const Engine = {
   },
 
   // ---- export ----
+  // Which stems a song has: each track with clips, each bus that has something routed to it, and the shared FX returns.
+  stemList(P) {
+    const anySolo = P.tracks.some((t) => t.solo);
+    const audible = (t) => !t.mute && (!anySolo || t.solo || (t.type === 'bus' && P.tracks.some((x) => x.out === t.id && x.solo)));
+    const has = (t) => t.clips.length > 0 && audible(t);
+    const out = [];
+    P.tracks.forEach((t, i) => {
+      if (t.type === 'bus') { if (audible(t) && P.tracks.some((x) => x.out === t.id && has(x))) out.push({ id: t.id, name: t.name + ' (bus)', index: i }); }
+      else if (has(t)) out.push({ id: t.id, name: t.name, index: i });
+    });
+    if (P.tracks.some((t) => has(t) && (t.rev > 0 || t.dly > 0))) out.push({ id: '__fxret', name: 'FX returns (reverb + delay)', index: P.tracks.length });
+    return out;
+  },
+  // Renders all stems from the full song, so sidechain pumping and bus effects match the mix.
+  // Each pass renders the whole song once and taps as many stems as fit in ~600 MB of render memory (max 15).
+  // opts.onPass(stems) is awaited after each pass (save them there, so memory doesn't pile up);
+  // a cancel (opts.isCancelled) takes effect after the current pass.
+  async renderStems(P, opts = {}) {
+    const list = this.stemList(P), out = [];
+    const secs = this.songEnd(P) * 4 * (60 / P.bpm / 4) + 3;
+    const bytesPerStem = secs * 44100 * 2 * 4;
+    const PER = opts.perPass || Math.max(2, Math.min(15, Math.floor(600e6 / bytesPerStem)));
+    const passes = Math.ceil(list.length / PER);
+    for (let p = 0; p < passes; p++) {
+      if (opts.isCancelled && opts.isCancelled()) throw Object.assign(new Error('Export cancelled'), { cancelled: true });
+      const part = list.slice(p * PER, (p + 1) * PER);
+      const bufs = await this.render(P, Object.assign({}, opts, { stems: part, noMaster: true, onProgress: (f) => opts.onProgress && opts.onProgress((p + f) / passes, part) }));
+      const done = part.map((st, i) => Object.assign({ buffer: bufs[i] }, st));
+      if (opts.onPass) await opts.onPass(done, p, passes);
+      else out.push(...done);
+    }
+    return out;
+  },
   async render(P, opts = {}) {
     const sr = 44100;
     const end = this.songEnd(P);
@@ -632,10 +665,21 @@ const Engine = {
     await this.ensureStretched(P);
     const spStep = 60 / P.bpm / 4;
     const len = Math.ceil((end * 4 * spStep + (opts.tail ?? 3)) * sr);
-    const ctx = new OfflineAudioContext(2, len, sr);
+    // opts.stems: [{ id: trackId | '__fxret' }] -> one stereo pair of output channels per stem (one pass, max 16)
+    const stems = opts.stems || null;
+    const nch = stems ? stems.length * 2 : 2;
+    const ctx = new OfflineAudioContext(nch, len, sr);
     await ctx.audioWorklet.addModule('js/worklets.js');
     const env = { bpm: P.bpm };
-    const bus = this.buildMaster(ctx, ctx.destination, env);
+    let masterDest = ctx.destination, merger = null;
+    if (stems) {
+      ctx.destination.channelCount = nch; ctx.destination.channelCountMode = 'explicit'; ctx.destination.channelInterpretation = 'discrete';
+      merger = ctx.createChannelMerger(nch);
+      merger.connect(ctx.destination);
+      masterDest = ctx.createGain(); masterDest.gain.value = 0;  // the mix itself isn't needed, but keep it pulled
+      masterDest.connect(ctx.destination);
+    }
+    const bus = this.buildMaster(ctx, masterDest, env);
     bus.dly.delayTime.value = (60 / P.bpm) * 0.75;
     if (!opts.noMaster) {
       this.buildFx(ctx, bus, P.master.fx, env);
@@ -653,21 +697,41 @@ const Engine = {
       nodes.set(tr.id, n);
     }
     this.route(nodes, PP, bus);
+    if (stems) {
+      stems.forEach((st, i) => {
+        // '__fxret' = shared reverb + delay returns, '__mixin' = everything arriving at the master (before master effects)
+        const srcs = st.id === '__fxret' ? [bus.revOut, bus.dlyOut] : st.id === '__mixin' ? [bus.input] : [nodes.get(st.id) && nodes.get(st.id).pan];
+        const sp = ctx.createChannelSplitter(2);
+        for (const n of srcs) if (n) n.connect(sp);
+        sp.connect(merger, 0, i * 2); sp.connect(merger, 1, i * 2 + 1);
+      });
+    }
     const OFF = 0.05;
     // schedule in chunks while rendering (suspend/resume) so only nearby notes exist in the graph
     const total = Math.round(end * 4), CH = 16;
-    let next = 0;
-    const until = (stepEnd) => { for (; next < Math.min(stepEnd, total); next++) this.scheduleStep(ctx, PP, next, next * spStep + OFF, next === 0, nodes, noop); };
+    let next = 0, cancelled = false;
+    const until = (stepEnd) => { if (cancelled) return; for (; next < Math.min(stepEnd, total); next++) this.scheduleStep(ctx, PP, next, next * spStep + OFF, next === 0, nodes, noop); };
     until(CH * 2);
     for (let k = 1; k * CH < total; k++) {
       const at = Math.floor(((k * CH * spStep + OFF) * sr) / 128) * 128 / sr;
-      ctx.suspend(at).then(() => { until((k + 2) * CH); ctx.resume(); });
+      ctx.suspend(at).then(() => {
+        // a cancel stops scheduling new notes; the rest renders as near-silence and is thrown away
+        if (!cancelled && opts.isCancelled && opts.isCancelled()) cancelled = true;
+        until((k + 2) * CH);
+        if (opts.onProgress) opts.onProgress(Math.min(1, (k * CH) / total));
+        ctx.resume();
+      });
     }
     const out = await ctx.startRendering();
+    if (cancelled || (opts.isCancelled && opts.isCancelled())) throw Object.assign(new Error('Export cancelled'), { cancelled: true });
+    if (opts.onProgress) opts.onProgress(1);
     // drop the small scheduling lead-in
     const lead = Math.round(OFF * sr);
-    const res = new AudioBuffer({ numberOfChannels: 2, length: out.length - lead, sampleRate: sr });
-    for (let c = 0; c < 2; c++) res.copyToChannel(out.getChannelData(c).subarray(lead), c);
-    return res;
+    const pair = (c0) => {
+      const res = new AudioBuffer({ numberOfChannels: 2, length: out.length - lead, sampleRate: sr });
+      for (let c = 0; c < 2; c++) res.copyToChannel(out.getChannelData(c0 + c).subarray(lead), c);
+      return res;
+    };
+    return stems ? stems.map((_, i) => pair(i * 2)) : pair(0);
   },
 };
