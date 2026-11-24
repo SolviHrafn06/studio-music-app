@@ -44,7 +44,7 @@ const Mixer = {
         h('button', { class: 'mini s' + (tr.solo ? ' on' : ''), onclick: () => App.mutate(() => (tr.solo = !tr.solo)) }, 'S'),
       ];
       if (tr.type === 'audio') btns.push(h('button', { class: 'mini at' + (tr.autotune.on ? ' on' : ''), title: 'Auto-Tune', onclick: () => App.mutate(() => (tr.autotune.on = !tr.autotune.on)) }, 'AT'));
-      const inserts = h('div', { class: 'inserts' },
+      const inserts = h('div', { class: 'inserts', title: tr.fx.length ? tr.fx.map((f) => FX[f.type].name).join(', ') : 'No effects yet' },
         tr.fx.map((f) => h('div', { class: 'ins' + (f.on ? '' : ' off'), title: 'Open ' + FX[f.type].name, onclick: () => { App.fxTrackId = tr.id; Panels.show('fx'); } }, h('span', { class: 'led' }), FX[f.type].name)),
         h('div', { class: 'ins add', onclick: () => { App.fxTrackId = tr.id; Panels.show('fx'); } }, '+ FX'));
       const buses = P.tracks.filter((t) => t.type === 'bus');
@@ -52,10 +52,10 @@ const Mixer = {
       box.append(h('div', { class: 'strip' + (tr.type === 'bus' ? ' bus' : '') + (tr.id === App.selTrackId ? ' sel' : ''), onmousedown: () => { App.selTrackId = tr.id; $$('.strip').forEach((s) => s.classList.remove('sel')); } },
         h('div', { class: 'nm', style: `border-color:${tr.color}`, title: tr.name }, tr.name),
         inserts,
-        h('div', { class: 'sends' },
+        h('div', { class: 'sends ve' },
           mini('Verb', tr.rev, 0.08, (n) => Math.round(n * 100) + '', (n) => (tr.rev = n)),
           mini('Echo', tr.dly, 0, (n) => Math.round(n * 100) + '', (n) => (tr.dly = n))),
-        h('div', { class: 'sends' },
+        h('div', { class: 'sends pt' },
           mini('Pan', (tr.pan + 1) / 2, 0.5, (n) => (Math.abs(n - 0.5) < 0.01 ? 'C' : n < 0.5 ? 'L' + Math.round((0.5 - n) * 200) : 'R' + Math.round((n - 0.5) * 200)), (n) => (tr.pan = n * 2 - 1)),
           mini('Tone', (tr.eq.high + 15) / 30, 0.5, (n) => { const v = n * 30 - 15; return (v > 0 ? '+' : '') + v.toFixed(0); }, (n) => (tr.eq.high = n * 30 - 15))),
         h('div', { class: 'fader-row' }, fader, meter),

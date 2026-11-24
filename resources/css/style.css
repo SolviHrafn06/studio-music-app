@@ -433,3 +433,29 @@ kbd { background: var(--bg3); border: 1px solid var(--line); border-bottom-width
   #bpm { width: 54px; }
   #topbar .field select { padding-left: 4px; }
 }
+/* ---- mixer: strips always fit the bottom panel (#27) ---- */
+#panel-mixer { container-type: size; container-name: mixer; overflow-x: auto; overflow-y: hidden; }
+.mixer { min-height: 0; height: 100%; align-items: stretch; }
+.strip { height: 100%; min-height: 0; overflow: hidden; }
+.strip .inserts { flex: 0 0 auto; height: 72px; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.strip .inserts > .ins { flex: 0 0 auto; }
+.strip > .fader-row { flex: 1 1 0; min-height: 36px; }
+.strip .fader-row > * { height: 100%; }
+@container mixer (max-height: 340px) {
+  .strip .sends.pt { display: none; }
+  .strip .inserts { height: 54px; }
+}
+@container mixer (max-height: 250px) {
+  .strip .sends.ve { display: none; }
+  .strip .inserts { height: 36px; }
+  .strip { padding: 5px 6px; gap: 3px; }
+}
+@container mixer (max-height: 170px) {
+  .strip .inserts, #lufs { display: none; }
+}
+@container mixer (max-height: 130px) {
+  .strip { padding: 3px 5px; gap: 2px; }
+  .strip .nm { padding-top: 1px; font-size: 11px; }
+  .strip > .fader-row { min-height: 26px; }
+  .strip .out-sel { height: 18px; }
+}
