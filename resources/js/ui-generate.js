@@ -445,7 +445,7 @@ const Generator = {
     };
     const ov = h('div', { class: 'modal-ov', onmousedown: (e) => { if (e.target === ov) close(); } },
       h('div', { class: 'modal gen-modal' },
-        h('div', { class: 'modal-head' }, h('h3', {}, '✨ Generate a song'), h('button', { class: 'mini', onclick: close }, '✕')),
+        h('div', { class: 'modal-head' }, h('h3', {}, '✨ Generate a song'), h('button', { class: 'mini', 'data-modal-cancel': true, onclick: close }, '✕')),
         h('div', { class: 'hint2' }, 'Studio writes a complete track for you: arrangement, drums, bass, chords, melody, effects and mix. Every part is normal tracks and clips, so you can change anything afterwards.'),
         h('label', { class: 'lab' }, 'Genre'), genre, genreHint,
         h('div', { class: 'gen-grid' },
@@ -505,7 +505,7 @@ function confirmReplace() {
       h('div', { class: 'hint2' }, 'Your current song has changes that are not saved. It stays in autosave, but you may want to save it first.'),
       h('div', { class: 'row-flex', style: 'margin-top:12px;gap:6px' },
         h('button', { onclick: async () => { await saveProject(); done(true); } }, 'Save first'),
-        h('span', { class: 'spacer' }), h('button', { onclick: () => done(false) }, 'Cancel'), h('button', { class: 'primary', onclick: () => done(true) }, 'Replace'))));
+        h('span', { class: 'spacer' }), h('button', { 'data-modal-cancel': true, onclick: () => done(false) }, 'Cancel'), h('button', { class: 'primary', onclick: () => done(true) }, 'Replace'))));
     document.body.append(ov);
   });
 }
