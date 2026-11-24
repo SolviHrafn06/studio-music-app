@@ -16,7 +16,7 @@ function onKeyDown(e) {
   const inPiano = App.tab === 'piano' && Piano.c;
   if (e.ctrlKey || e.metaKey) {
     const map = {
-      z: () => (e.shiftKey ? App.redo() : App.undo()), y: () => App.redo(), s: () => saveProject(), o: () => openProject(),
+      z: () => (e.shiftKey ? App.redo() : App.undo()), y: () => App.redo(), s: () => saveProject(), o: () => openProject(), g: () => Generator.open(),
       e: () => exportSong('wav'), r: () => exportSong('wav'), q: () => inPiano && Piano.quantize(), b: () => (inPiano && Piano.dupSel()) || Edit.duplicate(), d: () => Edit.duplicate(), t: () => Edit.split(), l: () => toggleLoop(),
       c: () => (inPiano && Piano.copy()) || Edit.copy(), x: () => (inPiano && Piano.copy() && Piano.delSel()) || Edit.cut(),
       v: () => (inPiano && Piano.paste()) || Edit.paste(), a: () => (inPiano ? Piano.selectAll() : Edit.selectAll()),
@@ -59,6 +59,10 @@ function toggleBottom() {
   if (parseInt(cur) > 60) { App._bh = cur; document.body.style.setProperty('--bottom-h', '38px'); }
   else document.body.style.setProperty('--bottom-h', App._bh || '360px');
   setTimeout(() => TL.draw(), 50);
+}
+function syncPatButton() {
+  const b = $('#btn-mode');
+  if (b) { b.textContent = App.patMode ? 'PAT' : 'SONG'; b.classList.toggle('pat', App.patMode); }
 }
 function toggleMode() {
   App.patMode = !App.patMode;
@@ -137,6 +141,7 @@ function wireTopBar() {
   $('#btn-redo').onclick = () => App.redo();
   $('#btn-save').onclick = saveProject;
   $('#btn-open').onclick = openProject;
+  $('#btn-gen').onclick = () => Generator.open();
   $('#btn-export').onclick = (e) => Menu.show(e.clientX, e.clientY + 14, [
     { label: 'Export WAV (best quality)', key: 'Ctrl+E', action: () => exportSong('wav') },
     { label: 'Export MP3 (192 kbps)', action: () => exportSong('mp3') },
@@ -184,6 +189,43 @@ function wireTopBar() {
   try { const v = localStorage.getItem('studio-bottom-h'); if (v) document.body.style.setProperty('--bottom-h', v); } catch (e) {}
 }
 
+// Make THIS copy of Studio the one that opens .studio files (per-user, no admin).
+// Stops an old install (or another folder's copy) from grabbing double-clicked songs.
+async function registerFileType() {
+  try {
+    if (!NL() || window.NL_OS !== 'Windows' || !window.NL_PATH) return;
+    const dir = String(NL_PATH).replace(/\//g, '\\').replace(/\\+$/, '');
+    const exe = dir + '\\Studio.exe';
+    try { await Neutralino.filesystem.getStats(exe); } catch (e) { return; } // dev build / renamed exe
+    const want = '"' + exe + '" --path="' + dir + '" "%1"';
+    const q = await Neutralino.os.execCommand('reg query "HKCU\\Software\\Classes\\Studio.Project\\shell\\open\\command" /ve');
+    const q2 = await Neutralino.os.execCommand('reg query "HKCU\\Software\\Classes\\Applications\\Studio.exe\\shell\\open\\command" /ve');
+    const ok = (r) => r && r.exitCode === 0 && r.stdOut.toLowerCase().includes(exe.toLowerCase() + '"');
+    if (ok(q) && ok(q2)) return;
+    const esc = want.replace(/"/g, '\\"');
+    const ico = dir + '\\icon.ico';
+    const cmds = [
+      'reg add "HKCU\\Software\\Classes\\.studio" /ve /d "Studio.Project" /f',
+      'reg add "HKCU\\Software\\Classes\\Studio.Project" /ve /d "Studio Project" /f',
+      'reg add "HKCU\\Software\\Classes\\Studio.Project\\DefaultIcon" /ve /d "' + ico + '" /f',
+      'reg add "HKCU\\Software\\Classes\\Studio.Project\\shell\\open\\command" /ve /d "' + esc + '" /f',
+      // used when a song was opened with "Open with > Studio" (old installs register under this name too)
+      'reg add "HKCU\\Software\\Classes\\Applications\\Studio.exe\\shell\\open\\command" /ve /d "' + esc + '" /f',
+      'reg add "HKCU\\Software\\Classes\\Applications\\Studio.exe\\SupportedTypes" /v ".studio" /d "" /f',
+    ];
+    for (const c of cmds) await Neutralino.os.execCommand(c);
+    console.log('Studio registered for .studio files:', exe);
+  } catch (e) { console.warn('file type registration skipped', e); }
+}
+function launchProjectPath() {
+  if (!NL() || !Array.isArray(window.NL_ARGS)) return null;
+  for (const raw of NL_ARGS.slice(1)) {
+    const a = String(raw).trim().replace(/^"+|"+$/g, '');
+    if (a.startsWith('--')) continue;
+    if (/\.studio$/i.test(a)) return a;
+  }
+  return null;
+}
 async function boot() {
   if (NL()) {
     try {
@@ -206,11 +248,17 @@ async function boot() {
   wireTopBar();
   await Autosave.open();
   const last = await Autosave.last();
+  // a .studio file passed on the command line (double-clicked in Explorer)
+  const launchFile = launchProjectPath();
+  registerFileType();
   const start = async (mode) => {
     $$('.splash-card button').forEach((b) => (b.disabled = true));
     try {
-      await Engine.init();
-      await Engine.ctx.resume();
+      if (!Engine.ctx) await Engine.init();
+      // Opened from a file there was no click yet, so the browser keeps audio paused
+      // until the first click/key press (handled below) - don't wait for it here.
+      const r = Engine.ctx.resume();
+      if (mode !== 'file') await r;
     } catch (e) {
       console.error(e);
       $('#start-btn').textContent = 'Audio failed to start: ' + e.message;
@@ -219,11 +267,21 @@ async function boot() {
     $('#splash').classList.add('hidden');
     let opened = false;
     if (mode === 'recover' && last) { await Autosave.restore(last); opened = true; toast('Recovered your last session.'); }
-    if (!opened && window.NL_ARGS) {
-      const f = NL_ARGS.find((a) => /\.studio$/i.test(a));
-      if (f && NL()) { try { await loadProjectText(await Neutralino.filesystem.readFile(f), f.split(/[\\/]/).pop().replace(/\.studio$/i, '')); opened = true; } catch (e) { console.warn(e); } }
+    if (!opened && mode === 'file' && launchFile) {
+      try {
+        await loadProjectText(await Neutralino.filesystem.readFile(launchFile), launchFile.split(/[\\/]/).pop().replace(/\.studio$/i, ''));
+        opened = true;
+        App.dirty = false;
+        try { Neutralino.window.setTitle('Studio - ' + App.project.name); } catch (e) {}
+        toast('Opened "' + App.project.name + '" - press Space to play.', 4000);
+      } catch (e) {
+        console.warn(e);
+        toast('Could not open ' + launchFile.split(/[\\/]/).pop() + ' - pick what to do instead.', 6000);
+      }
+      if (!opened) { $('#splash').classList.remove('hidden'); $$('.splash-card button').forEach((b) => (b.disabled = false)); return; }
     }
     if (!opened && mode === 'open') { App.load(emptyProject()); await openProject(); opened = true; }
+    if (!opened && mode === 'gen') { App.load(emptyProject()); App.dirty = false; opened = true; setTimeout(() => Generator.open(), 50); }
     if (!opened) { App.load(mode === 'empty' ? emptyProject() : demoProject()); toast(mode === 'empty' ? 'New project ready.' : 'Loaded a demo song — press Space to play it!', 4000); }
     Autosave.prune();
     Library.init();
@@ -231,8 +289,13 @@ async function boot() {
     MIDI.init();
     setInterval(() => App.dirty && Autosave.save(), 60000);
   };
+  // resume audio on the first interaction (needed when we skipped the splash)
+  const wake = () => { if (Engine.ctx && Engine.ctx.state !== 'running') Engine.ctx.resume(); };
+  window.addEventListener('pointerdown', wake, true);
+  window.addEventListener('keydown', wake, true);
   $('#start-btn').onclick = () => start('demo');
   $('#empty-btn').onclick = () => start('empty');
+  $('#gen-splash-btn').onclick = () => start('gen');
   $('#open-btn').onclick = () => start('open');
   if (last && last.json) {
     const t = new Date(last.time);
@@ -241,6 +304,7 @@ async function boot() {
     btn.textContent = `↺ Recover last session (${t.toLocaleDateString()} ${t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`;
     btn.onclick = () => start('recover');
   }
+  if (launchFile) { $('#splash').classList.add('hidden'); start('file'); }
   requestAnimationFrame(frame);
 }
 boot();

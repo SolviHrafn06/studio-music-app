@@ -173,6 +173,29 @@ function blankProject() {
 }
 function normalizeProject(P) {
   P.version = 2;
+  P.name = P.name || 'My Song';
+  P.bpm = Math.max(40, Math.min(300, +P.bpm || 120));
+  P.key = Number.isFinite(+P.key) ? +P.key % 12 : 0;
+  P.scale = P.scale || 'Major';
+  P.tracks = (P.tracks || []).filter((t) => t && ['drums', 'synth', 'audio', 'bus'].includes(t.type));
+  const ids = new Set();
+  for (const t of P.tracks) {
+    if (!t.id || ids.has(t.id)) t.id = uid();
+    ids.add(t.id);
+    t.name = t.name || (t.type === 'drums' ? 'Drums' : t.type === 'audio' ? 'Vocals' : t.type === 'bus' ? 'Bus' : 'Instrument');
+    t.clips = (t.clips || []).filter((c) => c && Number.isFinite(+c.start) && +c.length > 0);
+    for (const c of t.clips) { c.id = c.id || uid(); c.start = +c.start; c.length = +c.length; }
+    // fill anything missing from a fresh track of the same type (old or partial files)
+    const tpl = makeTrack(t.type, { colorIdx: ids.size, key: P.key, scale: P.scale });
+    for (const [k, v] of Object.entries(tpl)) {
+      if (k === 'id' || k === 'name' || k === 'clips' || k === 'inst') continue; // inst: old 'instrument' names are converted below
+      if (t[k] === undefined || t[k] === null) t[k] = (t.type === 'drums' && (k === 'patterns' || k === 'channels')) ? v : clone(v);
+      else if (v && typeof v === 'object' && !Array.isArray(v) && typeof t[k] === 'object') for (const [k2, v2] of Object.entries(v)) if (t[k][k2] === undefined) t[k][k2] = clone(v2 ?? null);
+    }
+    for (const k of ['volume', 'pan', 'rev', 'dly']) if (!Number.isFinite(+t[k])) t[k] = tpl[k]; else t[k] = +t[k];
+    for (const k of ['low', 'mid', 'high']) t.eq[k] = Number.isFinite(+t.eq[k]) ? +t.eq[k] : 0;
+    if (t.out && !P.tracks.some((x) => x.id === t.out && x.type === 'bus')) t.out = null;
+  }
   P.master = P.master || { fx: [], volume: 0.9, preset: 'None' };
   P.bpb = P.bpb || 4;
   P.markers = P.markers || [];
@@ -189,15 +212,19 @@ function normalizeProject(P) {
     }
     if (t.type === 'drums') {
       t.kit = t.kit || 'Classic';
+      t.channels = t.channels || [];
+      t.patterns = t.patterns && t.patterns.length ? t.patterns : [{ name: 'Pattern 1', len: 16, steps: {} }];
       t.channels.forEach((c) => (c.pitch = c.pitch || 0));
     }
     if (t.type === 'audio') {
+      t.autotune = t.autotune || { on: false, speed: 0.1, amount: 1, follow: true };
       const a = t.autotune;
       a.robot = a.robot || 0; a.formant = a.formant || 0; a.shift = a.shift || 0;
       a.harm = a.harm || DEFAULT_HARM();
       t.input = t.input || { device: 'default', ch: 'mono' };
       t.inGain = t.inGain || 0;
       for (const c of t.clips) {
+        c.offset = +c.offset || 0;
         c.takes = c.takes || [c.buf];
         c.srcBpm = c.srcBpm || P.bpm;
         c.stretch = !!c.stretch;
@@ -299,7 +326,10 @@ const App = {
     this.fixSelection();
     this.syncTop();
     Engine.ensureInstruments(this.project).then(() => TL.draw());
+    this.patMode = false;
     this.refresh(true);
+    try { if (TL.scroll) { TL.scroll.scrollLeft = 0; TL.scroll.scrollTop = 0; } } catch (e) {}
+    if (typeof syncPatButton === 'function') syncPatButton();
     this.dirty = false;
   },
 
@@ -707,12 +737,14 @@ async function saveBytes(name, bytes, filterName, ext, dir) {
   if (!dir) toast('Saved ' + name);
   return name;
 }
+const APP_VERSION = '3.1.0';
+const verNum = (v) => String(v || '0').split('.').map((x) => parseInt(x, 10) || 0).reduce((a, x, i) => a + x * Math.pow(1000, 2 - i), 0);
 const safeName = (s) => (s || 'My Song').replace(/[\\/:*?"<>|]+/g, '_');
 async function projectBytes() {
   const P = App.project;
   const buffers = {};
   for (const id of usedBuffers(P)) { const b = Buffers.get(id); if (b) buffers[id] = abToBase64(encodeWAV(b)); }
-  return new TextEncoder().encode(JSON.stringify({ app: 'Studio', version: 2, project: P, buffers }));
+  return new TextEncoder().encode(JSON.stringify({ app: 'Studio', version: 2, appVersion: APP_VERSION, project: P, buffers }));
 }
 async function saveProject() {
   const P = App.project;
@@ -720,22 +752,51 @@ async function saveProject() {
   if (path) { App.dirty = false; $('#save-state').textContent = 'Saved'; }
 }
 async function loadProjectText(text, name) {
-  const data = JSON.parse(text);
-  if (!data.project) throw new Error('not a Studio project');
-  Buffers.clear();
-  for (const [id, b64] of Object.entries(data.buffers || {})) {
-    const buf = await Engine.ctx.decodeAudioData(base64ToAb(b64));
-    Buffers.add(buf, id);
-  }
-  data.project.name = data.project.name || name;
-  App.load(data.project);
+  let data;
+  try { data = JSON.parse(text); } catch (e) { throw new Error('the file is damaged or not a Studio project'); }
+  if (!data || !data.project || !Array.isArray(data.project.tracks)) throw new Error('not a Studio project');
+  const busy = Busy.show('Opening ' + (data.project.name || name || 'song') + '...');
+  try {
+    // decode all audio first, so a bad file never wipes the song that is open now
+    const decoded = [], bad = [];
+    const entries = Object.entries(data.buffers || {});
+    for (let i = 0; i < entries.length; i++) {
+      const [id, b64] = entries[i];
+      busy.progress((i + 1) / (entries.length + 1));
+      try { decoded.push([id, await Engine.ctx.decodeAudioData(base64ToAb(b64))]); } catch (e) { bad.push(id); }
+    }
+    const P = clone(data.project);
+    P.name = P.name || name || 'My Song';
+    normalizeProject(P);
+    if (Engine.playing) App.stop();
+    Buffers.clear();
+    for (const [id, buf] of decoded) Buffers.add(buf, id);
+    App.load(P);
+    const missing = [...usedBuffers(P)].filter((id) => !Buffers.get(id)).length;
+    if (bad.length || missing) toast((bad.length + missing) + ' audio clip(s) in this song could not be loaded - the rest opened fine.', 6000);
+    if (data.appVersion && verNum(data.appVersion) > verNum(APP_VERSION)) toast('This song was saved with a newer Studio (' + data.appVersion + '). Update Studio if anything sounds or looks wrong.', 8000);
+    await Engine.ensureInstruments(App.project);
+    return P;
+  } finally { busy.hide(); }
 }
+// small "working..." overlay with a progress bar
+const Busy = {
+  show(text) {
+    let el = $('#busy');
+    if (!el) { el = h('div', { id: 'busy' }, h('div', { class: 'busy-card' }, h('div', { class: 'busy-text' }), h('div', { class: 'busy-bar' }, h('i')))); document.body.append(el); }
+    el.querySelector('.busy-text').textContent = text;
+    el.querySelector('.busy-bar i').style.width = '0%';
+    el.classList.add('on');
+    return { progress: (f) => (el.querySelector('.busy-bar i').style.width = Math.round(f * 100) + '%'), hide: () => el.classList.remove('on'), text: (t) => (el.querySelector('.busy-text').textContent = t) };
+  },
+};
 async function openProject() {
   const files = await pickFiles('#file-project');
   if (!files.length) return;
   try {
     await loadProjectText(await files[0].text(), files[0].name.replace(/\.[^.]+$/, ''));
     toast('Opened ' + files[0].name);
+    try { if (NL()) Neutralino.window.setTitle('Studio - ' + App.project.name); } catch (e) {}
   } catch (e) {
     console.error(e);
     toast('Could not open that file: ' + e.message, 5000);

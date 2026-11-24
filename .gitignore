@@ -11,3 +11,8 @@ neutralino.js
 # Neutralinojs related files
 .storage
 *.log
+
+# build outputs
+/build/*.exe
+/build/resources.neu
+node_modules/

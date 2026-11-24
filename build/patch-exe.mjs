@@ -1,7 +1,7 @@
 // Sets the Windows icon + version info on the built Studio.exe (pure JS, no Windows needed)
 import fs from 'fs';
-import * as ResEdit from '/tmp/resedit/node_modules/resedit/dist/index.js';
-import * as PE from '/tmp/resedit/node_modules/pe-library/dist/index.js';
+import * as ResEdit from "resedit";
+import * as PE from "pe-library";
 const [,, exePath, icoPath, version] = process.argv;
 const exe = PE.NtExecutable.from(fs.readFileSync(exePath), { ignoreCert: true });
 const res = PE.NtExecutableResource.from(exe);

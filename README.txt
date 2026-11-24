@@ -1,4 +1,4 @@
-STUDIO 3.0.1 - free music maker with built-in Auto-Tune
+STUDIO 3.1 - free music maker with built-in Auto-Tune
 =====================================================
 
 INSTALL
@@ -11,11 +11,31 @@ INSTALL
   "More info" -> "Run anyway" (it does that for any unsigned app).
   Needs Windows 10 or 11. Allow microphone / MIDI access when asked.
 
+NEW IN 3.1
+  - SONG GENERATOR: click "Generate" (or Ctrl+G, or "Generate a song for me"
+    on the start screen). Pick a genre (Dubstep, Riddim/Brostep, Trap, House,
+    Drum & Bass, Lo-fi, Pop, Synthwave), a mood, key, tempo and length, and
+    Studio writes a complete arranged song: intro, builds, drops/choruses,
+    drums, bass, chords, melody, risers, impacts and a mastered mix.
+    "Try another" makes a new one with the same settings. Everything it makes
+    is normal tracks and clips, so you can edit or replace any part.
+  - Opening songs is much more reliable:
+    * Studio now makes itself the program for .studio files whenever it
+      starts, so an old copy can no longer grab your songs.
+    * A damaged file no longer wipes the song you have open.
+    * Older or partly broken songs open with sensible defaults instead of
+      half-loading, and you get a note if some audio could not be loaded.
+    * Songs remember which Studio version saved them; newer songs warn you
+      to update. Opening shows a progress bar and starts at bar 1.
+
+NEW IN 3.0.2
+  - Double-clicking a .studio file now opens that song straight away
+    (no start screen). Press Space to play.
+
 NEW IN 3.0.1
   - Much faster: export is up to 5x quicker on long songs, drums use far less
     CPU, and long playback sessions no longer slow down over time.
   - Custom sounds show their name in the instrument menus.
-  - Demo track "Neon Riot" (dubstep) included - open "Neon Riot.studio".
 
 NEW IN 3.0 - FOR FL STUDIO USERS
   - Sampler / Slicer: load any sample and play it across the keyboard, or
