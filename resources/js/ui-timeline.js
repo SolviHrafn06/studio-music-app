@@ -64,6 +64,31 @@ async function setInstrument(tr, name) {
 
 // ---------------- track headers ----------------
 const Headers = {
+  // drag the right edge of the track list to make it wider (#32); remembered between sessions
+  MIN_W: 180, MAX_W: 420,
+  setWidth(w) {
+    w = Math.round(clamp(w, this.MIN_W, this.MAX_W));
+    document.documentElement.style.setProperty('--head-w', w + 'px');
+    return w;
+  },
+  restoreWidth() { try { const v = +localStorage.getItem('studio-head-w'); if (v) this.setWidth(v); } catch (e) {} },
+  resizer() {
+    return h('div', { class: 'head-resize', title: 'Drag to resize the track list (double-click to reset)',
+      ondblclick: () => { this.setWidth(230); try { localStorage.removeItem('studio-head-w'); } catch (e) {} TL.draw(); },
+      onmousedown: (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const x0 = e.clientX, w0 = $('#headers').getBoundingClientRect().width;
+        document.body.classList.add('col-resizing');
+        const move = (ev) => { this.setWidth(w0 + ev.clientX - x0); TL.draw(); };
+        const up = () => {
+          window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+          document.body.classList.remove('col-resizing');
+          try { localStorage.setItem('studio-head-w', parseInt(getComputedStyle(document.documentElement).getPropertyValue('--head-w'))); } catch (e) {}
+          TL.draw();
+        };
+        window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+      } });
+  },
   render() {
     const el = $('#headers');
     el.innerHTML = '';
@@ -78,8 +103,9 @@ const Headers = {
       if (tr.type === 'audio') row2.push(btn('mon', '🎧', 'Monitor: hear this track’s input live (Input & Amp tab)', Engine.monitors.has(tr.id), () => InputPanel.toggleMonitor(tr)));
       if (tr.type === 'audio') row2.push(btn('at', 'AT', 'Auto-Tune on/off', tr.autotune.on, () => App.mutate(() => (tr.autotune.on = !tr.autotune.on))));
       row2.push(btn('aut' + (tr.auto.some((l) => l.pts.length) ? ' has' : ''), 'A', 'Show automation lane', tr.autoShow, () => App.mutate(() => (tr.autoShow = !tr.autoShow))));
-      if (tr.type === 'synth') row2.push(options(h('select', { title: 'Instrument', onmousedown: (e) => e.stopPropagation(), onchange: (e) => setInstrument(tr, e.target.value) }), instrumentOptions(tr.inst), instValue(tr.inst)));
-      if (tr.type === 'drums') row2.push(options(h('select', { title: 'Drum kit', onmousedown: (e) => e.stopPropagation(), onchange: (e) => App.mutate(() => (tr.kit = e.target.value), false) }), Object.keys(DRUM_KITS).map((k) => [k, k + ' kit']), tr.kit));
+      const instName = tr.inst ? (tr.inst.kind === 'sample' ? 'Sampler' : tr.inst.name) : '';
+      if (tr.type === 'synth') row2.push(options(h('select', { title: 'Instrument: ' + instName, class: 'inst-sel', onmousedown: (e) => e.stopPropagation(), onchange: (e) => setInstrument(tr, e.target.value) }), instrumentOptions(tr.inst), instValue(tr.inst)));
+      if (tr.type === 'drums') row2.push(options(h('select', { title: 'Drum kit: ' + tr.kit, class: 'inst-sel', onmousedown: (e) => e.stopPropagation(), onchange: (e) => App.mutate(() => (tr.kit = e.target.value), false) }), Object.keys(DRUM_KITS).map((k) => [k, k + ' kit']), tr.kit));
       const vol = h('input', {
         type: 'range', min: 0, max: 1.2, step: 0.01, value: tr.volume, title: 'Volume', class: 'hvol',
         onmousedown: (e) => { e.stopPropagation(); App.beginDrag(); }, onchange: () => App.endDrag(),
@@ -91,7 +117,7 @@ const Headers = {
         h('div', { class: 'body' },
           h('div', { class: 'row' },
             h('span', { class: 'type', title: tr.type }, TYPE_ICON[tr.type]),
-            h('input', { class: 'name', type: 'text', value: tr.name, spellcheck: false, onmousedown: (e) => e.stopPropagation(), onchange: (e) => App.mutate(() => (tr.name = e.target.value || 'Track')) }),
+            h('input', { class: 'name', type: 'text', value: tr.name, title: tr.name + ' (click to rename)', spellcheck: false, onmousedown: (e) => e.stopPropagation(), onchange: (e) => App.mutate(() => (tr.name = e.target.value || 'Track')) }),
             fxn, vol),
           h('div', { class: 'row' }, row2),
         ));
@@ -110,6 +136,7 @@ const Headers = {
       h('button', { onclick: () => addTrack('synth') }, '+ Instrument'),
       h('button', { onclick: () => addTrack('audio') }, '+ Vocal'),
       h('button', { onclick: () => addGuitarTrack() }, '+ Guitar')));
+    el.append(Headers.resizer());
   },
   menu(tr, e) {
     const P = App.project;
@@ -130,6 +157,7 @@ const Headers = {
 // ---------------- timeline ----------------
 const TL = {
   init() {
+    Headers.restoreWidth();
     this.scroll = $('#arr-scroll');
     this.cv = $('#timeline');
     this.ruler = $('#ruler');

@@ -69,7 +69,7 @@ kbd { background: var(--bg3); border: 1px solid var(--line); border-bottom-width
 #arr-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: var(--bg); border-bottom: 1px solid var(--line); }
 #hint { color: var(--muted); font-size: 11px; margin-right: 8px; }
 #arr-scroll { flex: 1; overflow: auto; position: relative; background: var(--bg); }
-#arr-grid { display: grid; grid-template-columns: 230px auto; grid-template-rows: 26px auto; width: max-content; min-width: 100%; }
+#arr-grid { display: grid; grid-template-columns: var(--head-w, 230px) auto; grid-template-rows: 26px auto; width: max-content; min-width: 100%; }
 #corner { position: sticky; left: 0; top: 0; z-index: 4; background: var(--bg2); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); color: var(--muted); padding: 5px 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
 #ruler-wrap { position: sticky; top: 0; z-index: 3; height: 26px; background: var(--bg2); border-bottom: 1px solid var(--line); cursor: pointer; }
 #ruler { display: block; }
@@ -459,3 +459,9 @@ kbd { background: var(--bg3); border: 1px solid var(--line); border-bottom-width
   .strip > .fader-row { min-height: 26px; }
   .strip .out-sel { height: 18px; }
 }
+/* ---- track list: resizable, full names on hover (#32) ---- */
+#headers { position: sticky; }
+.head-resize { position: absolute; top: 0; right: -3px; bottom: 0; width: 6px; cursor: col-resize; z-index: 5; }
+.head-resize:hover, body.col-resizing .head-resize { background: var(--accent); opacity: .6; }
+body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-select: none; }
+.track-header .row select.inst-sel { flex: 1 1 auto; min-width: 70px; max-width: none; }
