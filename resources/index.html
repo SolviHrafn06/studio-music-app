@@ -32,11 +32,11 @@
   <header id="topbar">
     <div class="brand"><span class="dot"></span><input id="song-name" type="text" spellcheck="false" title="Song name"></div>
     <div class="group">
-      <button id="btn-new" title="New project">New</button>
-      <button id="btn-open" title="Open project (Ctrl+O)">Open</button>
-      <button id="btn-gen" class="gen-btn" title="Generate a whole song (Ctrl+G)">✨ Generate</button>
-      <button id="btn-save" title="Save project (Ctrl+S)">Save</button>
-      <button id="btn-export" class="outline" title="Export WAV, MP3 or stems">Export ▾</button>
+      <button id="btn-new" title="New project"><span class="ico">＋</span><span class="lbl">New</span></button>
+      <button id="btn-open" title="Open project (Ctrl+O)"><span class="ico">📂</span><span class="lbl">Open</span></button>
+      <button id="btn-gen" class="gen-btn" title="Generate a whole song (Ctrl+G)">✨<span class="lbl"> Generate</span></button>
+      <button id="btn-save" title="Save project (Ctrl+S)"><span class="ico">💾</span><span class="lbl">Save</span></button>
+      <button id="btn-export" class="outline" title="Export WAV, MP3 or stems"><span class="lbl">Export </span>⤓▾</button>
     </div>
     <div class="group transport">
       <button id="btn-mode" class="mode-btn" title="SONG plays the whole arrangement · PAT loops just the pattern/clip you are editing (like FL Studio)">SONG</button>
@@ -48,8 +48,8 @@
       <button id="btn-metro" class="toggle" title="Metronome (M)">♩</button>
     </div>
     <div class="lcd"><div id="time-bars">1.1.1</div><div id="time-secs">0:00.0</div></div>
-    <label class="field">BPM <input id="bpm" type="number" min="40" max="240" value="120"></label>
-    <label class="field">Key <select id="key"></select></label>
+    <label class="field"><span class="lbl">BPM</span> <input id="bpm" type="number" min="40" max="240" value="120"></label>
+    <label class="field" title="Key"><span class="lbl">Key</span> <select id="key"></select></label>
     <label class="field"><select id="scale"></select></label>
     <label class="field" title="Time signature"><select id="timesig"><option value="2">2/4</option><option value="3">3/4</option><option value="4" selected>4/4</option><option value="5">5/4</option><option value="6">6/4</option><option value="7">7/4</option></select></label>
     <div class="spacer"></div>
