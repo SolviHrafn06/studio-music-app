@@ -217,6 +217,27 @@ function generateSong(opts) {
   if (dr.channels.find((c) => c.kind === 'hat')) dr.channels.find((c) => c.kind === 'hat').vol = 0.55;
   if (dr.channels.find((c) => c.kind === 'crash')) dr.channels.find((c) => c.kind === 'crash').vol = 0.6;
   tracks.push(dr);
+
+  // ===== TOPS: bright hats/shaker/crash layer on the big sections, so drops & choruses aren't dull (#9) =====
+  const big = form.filter((s) => s.e >= 3);
+  if (big.length && genre !== 'Lo-fi') {
+    const tops = makeTrack('drums', P);
+    tops.name = 'Tops'; tops.kit = '909'; tops.channels = []; tops.patterns = []; tops.swing = G.swing; tops.rev = 0.12;
+    tops.volume = { Trap: 1.0, Dubstep: 0.62, 'Riddim / Brostep': 0.62, 'Drum & Bass': 0.45, House: 0.4, Pop: 0.34, Synthwave: 0.34 }[genre] || 0.45;
+    tops.fx.push(newFx('eq', { hp: 550, hg: 3 }), newFx('comp', { thr: -16, ratio: 3, att: 3, rel: 60, makeup: 4 }), newFx('width', { width: 1.45 }));
+    const four = genre === 'House' || genre === 'Synthwave' || genre === 'Pop';
+    const base = { hat: 'xoxoxoxoxoxoxoxo', shaker: 'oxoxoxoxoxoxoxox', ohat: four ? '..x...x...x...x.' : '......x.......x.' };
+    if (genre === 'Trap') Object.assign(base, { hat: 'xoxoxoxox3xoxoxo', shaker: '', ohat: '' });
+    if (genre === 'Drum & Bass') Object.assign(base, { ride: 'x.x.x.x.x.x.x.x.' });
+    const tA = drumLoopPattern(tops, { name: 'Tops', s: base });
+    const tB = drumLoopPattern(tops, { name: 'Tops Roll', s: Object.assign({}, base, { hat: genre === 'Trap' ? 'xoxoxoxo3333444.' : 'xoxoxoxoxoxo3x4x' }) });
+    const tC = drumLoopPattern(tops, { name: 'Tops Crash', s: Object.assign({}, base, { crash: 'x...............', hat: '..' + base.hat.slice(2) }) });
+    tops.patterns.push(tA, tB, tC);
+    const hat = tops.channels.find((c) => c.kind === 'hat'); if (hat) { hat.pitch = 3; hat.vol = 0.75; }
+    const cr = tops.channels.find((c) => c.kind === 'crash'); if (cr) cr.vol = 0.6;
+    for (const s of big) for (let i = 0; i < s.bars; i++) tops.clips.push({ id: uid(), start: ST(s.bar + i), length: 4, pattern: i % 8 === 0 ? 2 : i % 4 === 3 ? 1 : 0, off: 0 });
+    tracks.push(tops);
+  }
   const sc = (thr = -28, ratio = 6) => newFx('scomp', { src: dr.id, thr, ratio, att: 2, rel: 140 });
 
   // ===== BASS =====
@@ -409,7 +430,7 @@ function generateSong(opts) {
   const gainBy = { Drums: 0.9, Impacts: 0.75 };
   for (const t of tracks) if (gainBy[t.name]) t.volume = gainBy[t.name];
   const master = genre === 'Lo-fi' ? [newFx('crush', { bits: 12, down: 2, tone: 7000, mix: 0.4 }), newFx('sat', { mode: 'Tape', drive: 0.3, mix: 0.5, out: -3 }), newFx('eq', { hp: 50, lp: 10000 }), newFx('limiter', { gain: 3, ceil: -1 })]
-    : edm ? [newFx('eq', { hp: 26, lg: 1.5, hg: 2 }), newFx('comp', { thr: -14, ratio: 2, att: 30, rel: 150 }), newFx('limiter', { gain: 4, ceil: -0.8 })]
+    : edm ? [newFx('eq', { hp: 26, lg: genre === 'Trap' ? 0.5 : 1.5, hg: genre === 'Trap' ? 4.5 : 2 }), newFx('comp', { thr: -14, ratio: 2, att: 30, rel: 150 }), newFx('limiter', { gain: 4, ceil: -0.8 })]
       : [newFx('eq', { hp: 30, lg: 1, hg: 1.5 }), newFx('comp', { thr: -16, ratio: 2, att: 25, rel: 120, makeup: 1 }), newFx('limiter', { gain: 3.5, ceil: -1 })];
   P.master = { fx: master, volume: 0.85, preset: 'None' };
   P.tracks = tracks;
