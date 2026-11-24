@@ -1,0 +1,32 @@
+const path = require('path');
+const SHOTS = process.env.SHOTS || require('os').tmpdir();
+const EXAMPLE = path.join(__dirname, '..', 'examples', 'Neon Riot.studio');
+const { chromium } = require('playwright');
+const srv = require('./serve')(8814);
+(async () => {
+  const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
+  const pg = await b.newPage({ viewport: { width: 1600, height: 950 } });
+  const errs = []; pg.on('pageerror', (e) => errs.push(e.message));
+  await pg.goto('http://localhost:8814/');
+  await pg.waitForTimeout(800);
+  await pg.click('#gen-splash-btn'); await pg.waitForTimeout(1200);
+  const d = await pg.evaluate(() => [...document.querySelectorAll('.gen-modal select')].map((s) => s.value).concat(document.querySelector('.gen-modal input[type=checkbox]').checked));
+  console.log('dialog defaults', d);
+  await pg.selectOption('.gen-modal select >> nth=0', 'Dubstep');
+  await pg.click('.gen-modal button.primary');
+  await pg.waitForTimeout(6000);
+  await pg.screenshot({ path: path.join(SHOTS, 'gen-ui1.png') });
+  await pg.click('#gen-bar button >> nth=0'); // try another (song is dirty -> confirm)
+  await pg.waitForTimeout(800);
+  const conf = await pg.evaluate(() => !!document.querySelector('.modal-ov h3') && document.querySelector('.modal-ov h3').textContent);
+  console.log('confirm dialog:', conf);
+  await pg.click('.modal-ov button.primary'); await pg.waitForTimeout(6000);
+  console.log('second song:', await pg.evaluate(() => App.project.name + ' / ' + App.project.generated.seed));
+  await pg.keyboard.press('Space'); await pg.waitForTimeout(1500);
+  console.log('playing', await pg.evaluate(() => Engine.playing && document.querySelector('#time-bars').textContent));
+  await pg.keyboard.press('Space');
+  await pg.keyboard.press('Control+g'); await pg.waitForTimeout(400);
+  console.log('ctrl+g dialog', await pg.evaluate(() => !!document.querySelector('.gen-modal')));
+  console.log(errs.join('\n') || 'no errors');
+  await b.close(); srv.close();
+})();

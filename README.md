@@ -35,6 +35,7 @@ resources/            the app (served by Neutralino)
     ui-generate.js    song generator
     main.js           startup, shortcuts, file association
   samples/            instrument samples (CC-BY 3.0, see credits)
+tests/                Playwright tests (npm test) + tests/run.js runner
 build/
   studio.nsi          NSIS installer script
   patch-exe.mjs       sets the exe icon + version info
@@ -47,6 +48,20 @@ examples/
 1. Install the Neutralino CLI: `npm i -g @neutralinojs/neu`
 2. In the project folder, download the Neutralino binaries and client library: `neu update`
 3. Run it: `neu run`
+
+## Tests
+
+The tests drive the real app in headless Chromium with Playwright (no Neutralino needed):
+
+```bash
+npm install
+npx playwright install chromium   # once
+npm test                          # all tests (~5 min)
+node tests/run.js mixer           # only tests whose file name contains "mixer"
+SHOTS=./shots npm test            # keep the screenshots the tests take
+```
+
+Each `tests/*.test.js` file starts its own static server for `resources/` (`tests/serve.js`). A test fails if it exits non-zero, prints a line starting with `✗`, or doesn't end with `no errors`. They also run on every push and pull request via GitHub Actions (`.github/workflows/tests.yml`).
 
 ## Building the Windows release
 
